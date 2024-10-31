@@ -8,9 +8,10 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 use tokio::time::timeout;
 
+// In archiver/client.rs
 lazy_static! {
     static ref ARCHIVER_URL: Mutex<String> =
-        Mutex::new("http://localhost:17665/retrieval".to_string());
+        Mutex::new("http://lcls-archapp.slac.stanford.edu/retrieval/data".to_string());
 }
 
 pub struct ArchiverClient {
@@ -26,60 +27,6 @@ impl ArchiverClient {
             client: Client::new(),
             base_url,
         }
-    }
-
-    /// Processes a `Point` and extracts a `ProcessedValue` if possible.
-    fn process_value(point: &Point) -> Option<ProcessedValue> {
-        match &point.val {
-            Value::Array(arr) if arr.len() >= 5 => Some(ProcessedValue {
-                value: arr[0],         // mean
-                stddev: arr[1],        // standard deviation
-                min: arr[2],           // minimum
-                max: arr[3],           // maximum
-                count: arr[4] as i64,  // count
-            }),
-            Value::Single(val) => Some(ProcessedValue {
-                value: *val,
-                min: *val,
-                max: *val,
-                stddev: 0.0,
-                count: 1,
-            }),
-            _ => None,
-        }
-    }
-
-    /// Normalizes raw PV data into a standard format.
-    fn normalize_data(data: Vec<PVData>) -> Vec<NormalizedPVData> {
-        data.into_iter()
-            .map(|pv_data| {
-                let normalized_points = pv_data
-                    .data
-                    .iter()
-                    .filter_map(|point| {
-                        let processed = Self::process_value(point)?;
-                        let timestamp =
-                            point.secs * 1000 + point.nanos.unwrap_or(0) / 1_000_000;
-
-                        Some(NormalizedPoint {
-                            timestamp,
-                            severity: point.severity.unwrap_or(0),
-                            status: point.status.unwrap_or(0),
-                            value: processed.value,
-                            min: processed.min,
-                            max: processed.max,
-                            stddev: processed.stddev,
-                            count: processed.count,
-                        })
-                    })
-                    .collect();
-
-                NormalizedPVData {
-                    meta: pv_data.meta,
-                    data: normalized_points,
-                }
-            })
-            .collect()
     }
 
     /// Formats a `SystemTime` into the format expected by the archiver.
@@ -117,6 +64,15 @@ impl ArchiverClient {
             pv.to_string()
         };
 
+        // Print the request URL and parameters for debugging
+        println!("Request URL: {}", url);
+        println!(
+            "Query Params: pv={}, from={}, to={}",
+            pv_query,
+            Self::format_date_for_archiver(from),
+            Self::format_date_for_archiver(to)
+        );
+
         let response = timeout(
             Duration::from_secs(30),
             self.client
@@ -137,12 +93,31 @@ impl ArchiverClient {
             ));
         }
 
-        let raw_data: Vec<PVData> = response.json().await?;
-        if raw_data.is_empty() {
+        let pv_data: Vec<PVData> = response.json().await.map_err(|e| {
+            ArchiverError::InvalidFormat(format!("Failed to parse response JSON: {}", e))
+        })?;
+        if pv_data.is_empty() {
             return Err(ArchiverError::InvalidFormat("Empty response".into()));
         }
 
-        Ok(Self::normalize_data(raw_data))
+        // Convert PVData to NormalizedPVData
+        let normalized_data = pv_data
+            .into_iter()
+            .map(|pv_datum| {
+                let normalized_points = pv_datum
+                    .data
+                    .into_iter()
+                    .map(|point| point.to_normalized_point())
+                    .collect::<Result<Vec<NormalizedPoint>, ArchiverError>>()?;
+
+                Ok(NormalizedPVData {
+                    meta: pv_datum.meta,
+                    data: normalized_points,
+                })
+            })
+            .collect::<Result<Vec<NormalizedPVData>, ArchiverError>>()?;
+
+        Ok(normalized_data)
     }
 
     /// Fetches binned data for multiple PVs.
@@ -187,22 +162,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_pv_data() {
+        // Set the archiver URL explicitly for testing
+        set_archiver_url("http://lcls-archapp.slac.stanford.edu/retrieval/data".to_string());
+
         let client = ArchiverClient::new();
-        let from = SystemTime::now() - Duration::from_secs(3600);
+        println!("Archiver base URL: {}", client.base_url);
+
+        let from = SystemTime::now() - Duration::from_secs(3600); // 1 hour ago
         let to = SystemTime::now();
 
         let result = client
             .fetch_pv_data(
-                "TEST:PV",
+                "ROOM:LI30:1:OUTSIDE_TEMP",
                 from,
                 to,
                 Some(FetchOptions {
-                    operator: Some("mean".to_string()),
+                    operator: None, // Use raw data
                 }),
             )
             .await;
 
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "Failed to fetch PV data: {:?}",
+            result.err()
+        );
+
+        let data = result.unwrap();
+        assert!(
+            !data.is_empty(),
+            "No data returned for PV in the given time range"
+        );
+
+        println!("Received data: {:?}", data);
     }
 
     #[test]
@@ -228,38 +220,5 @@ mod tests {
             ArchiverClient::get_operator_for_time_range(Duration::from_secs(864000)),
             Some("optimized_4320".to_string())
         );
-    }
-
-    #[test]
-    fn test_process_value() {
-        // Test single value
-        let single_point = Point {
-            secs: 0,
-            nanos: None,
-            val: Value::Single(42.0),
-            severity: None,
-            status: None,
-        };
-        let processed = ArchiverClient::process_value(&single_point).unwrap();
-        assert_eq!(processed.value, 42.0);
-        assert_eq!(processed.min, 42.0);
-        assert_eq!(processed.max, 42.0);
-        assert_eq!(processed.stddev, 0.0);
-        assert_eq!(processed.count, 1);
-
-        // Test array value
-        let array_point = Point {
-            secs: 0,
-            nanos: None,
-            val: Value::Array(vec![1.0, 0.5, 0.0, 2.0, 10.0]),
-            severity: None,
-            status: None,
-        };
-        let processed = ArchiverClient::process_value(&array_point).unwrap();
-        assert_eq!(processed.value, 1.0);
-        assert_eq!(processed.stddev, 0.5);
-        assert_eq!(processed.min, 0.0);
-        assert_eq!(processed.max, 2.0);
-        assert_eq!(processed.count, 10);
     }
 }
