@@ -1,10 +1,8 @@
-// archiver/mod.rs
-
 pub mod types;
-pub mod client;
+pub mod constants;
 pub mod commands;
 
-// Re-exporting for easier access
-pub use types::*;
-pub use client::*;
+// Re-export commonly used items
 pub use commands::*;
+pub use types::*;
+pub use constants::*;
