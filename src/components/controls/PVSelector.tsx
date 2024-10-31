@@ -1,6 +1,4 @@
-// PVSelector.tsx
-
-import { createSignal, createEffect, For } from 'solid-js';
+import { createSignal } from 'solid-js';
 
 type PVSelectorProps = {
   selectedPVs: () => string[];
@@ -11,12 +9,10 @@ type PVSelectorProps = {
 const PVSelector = (props: PVSelectorProps) => {
   // Add default PV on component mount
   const defaultPV = "ROOM:LI30:1:OUTSIDE_TEMP";
-  createEffect(() => {
-    if (props.selectedPVs().length === 0) {
-      props.onAddPV(defaultPV);
-    }
-  });
-
+  if (props.selectedPVs().length === 0) {
+    props.onAddPV(defaultPV);
+  }
+ 
   const [searchText, setSearchText] = createSignal('');
 
   const handleSearch = (e: Event) => {
@@ -51,19 +47,17 @@ const PVSelector = (props: PVSelectorProps) => {
           <p class="text-gray-500">No PVs selected</p>
         ) : (
           <ul class="space-y-2">
-            <For each={props.selectedPVs()}>
-              {(pv) => (
-                <li class="flex justify-between items-center p-2 bg-gray-50 rounded">
-                  <span>{pv}</span>
-                  <button
-                    onClick={() => props.onRemovePV(pv)}
-                    class="text-red-500 hover:text-red-700"
-                  >
-                    Remove
-                  </button>
-                </li>
-              )}
-            </For>
+            {props.selectedPVs().map(pv => (
+              <li class="flex justify-between items-center p-2 bg-gray-50 rounded">
+                <span>{pv}</span>
+                <button
+                  onClick={() => props.onRemovePV(pv)}
+                  class="text-red-500 hover:text-red-700"
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
           </ul>
         )}
       </div>
