@@ -1,5 +1,3 @@
-// ArchiveViewer.tsx
-
 import { createSignal, createEffect, onCleanup } from "solid-js";
 import {
   Dialog,
@@ -11,28 +9,43 @@ import PVSelector from "../components/controls/PVSelector";
 import TimeRangeSelector from "../components/controls/TimeRangeSelector";
 import EPICSChart from "../components/chart/EPICSChart";
 import { fetchBinnedData } from "../utils/archiverApi";
+import type { PVWithProperties, PenProperties } from "../types";
+import { DEFAULT_PEN_PROPERTIES } from "../types";
 
-// Constants and Configurations
+// Constants
 const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
-const MAX_RETRIES = 3;
 const DEBUG_LOG_LIMIT = 50;
 
+// Types
+type TimeRange = {
+  start: Date;
+  end: Date;
+};
+
+type DebugLog = {
+  timestamp: string;
+  message: string;
+  type: "info" | "error" | "debug" | "success";
+  details?: string | null;
+};
+
+type DebugDialogProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  data: any;
+};
+
+// Helper functions
 const getOperatorForTimeRange = (duration: number): string | null => {
-  // Duration in milliseconds
-  if (duration <= 15 * 60 * 1000) {
-    // <= 15 minutes
+  if (duration <= 15 * 60 * 1000) { // <= 15 minutes
     return null; // Raw data
-  } else if (duration <= 2 * 60 * 60 * 1000) {
-    // <= 2 hours
+  } else if (duration <= 2 * 60 * 60 * 1000) { // <= 2 hours
     return "optimized_720"; // ~10s resolution
-  } else if (duration <= 6 * 60 * 60 * 1000) {
-    // <= 6 hours
+  } else if (duration <= 6 * 60 * 60 * 1000) { // <= 6 hours
     return "optimized_720"; // ~30s resolution
-  } else if (duration <= 24 * 60 * 60 * 1000) {
-    // <= 24 hours
+  } else if (duration <= 24 * 60 * 60 * 1000) { // <= 24 hours
     return "optimized_1440"; // ~1min resolution
-  } else if (duration <= 7 * 24 * 60 * 60 * 1000) {
-    // <= 7 days
+  } else if (duration <= 7 * 24 * 60 * 60 * 1000) { // <= 7 days
     return "optimized_2016"; // ~5min resolution
   } else {
     return "optimized_4320"; // ~10min resolution
@@ -40,12 +53,6 @@ const getOperatorForTimeRange = (duration: number): string | null => {
 };
 
 // Debug Dialog Component
-type DebugDialogProps = {
-  isOpen: boolean;
-  onClose: () => void;
-  data: any;
-};
-
 const DebugDialog = (props: DebugDialogProps) => (
   <Dialog
     open={props.isOpen}
@@ -70,26 +77,13 @@ const DebugDialog = (props: DebugDialogProps) => (
   </Dialog>
 );
 
-// Types for state management
-type TimeRange = {
-  start: Date;
-  end: Date;
-};
-
-type DebugLog = {
-  timestamp: string;
-  message: string;
-  type: "info" | "error" | "debug" | "success";
-  details?: string | null;
-};
-
 // Main Component
 const ArchiveViewer = () => {
   // Refs
   let chartContainer: HTMLDivElement | undefined;
 
   // State Management
-  const [selectedPVs, setSelectedPVs] = createSignal<string[]>([]);
+  const [selectedPVs, setSelectedPVs] = createSignal<PVWithProperties[]>([]);
   const [timeRange, setTimeRange] = createSignal<TimeRange>({
     start: new Date(),
     end: new Date(),
@@ -97,9 +91,7 @@ const ArchiveViewer = () => {
   const [timezone, setTimezone] = createSignal<string>(
     Intl.DateTimeFormat().resolvedOptions().timeZone
   );
-  const [currentOperator, setCurrentOperator] = createSignal<string | null>(
-    null
-  );
+  const [currentOperator, setCurrentOperator] = createSignal<string | null>(null);
   const [data, setData] = createSignal<any[]>([]);
   const [loading, setLoading] = createSignal<boolean>(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -126,9 +118,10 @@ const ArchiveViewer = () => {
   };
 
   // Data Fetching Logic
-  const fetchData = async (retryCount = 0) => {
+  const fetchData = async () => {
     try {
-      if (!selectedPVs().length) {
+      const pvs = selectedPVs();
+      if (pvs.length === 0) {
         throw new Error("No PVs selected");
       }
       if (!timeRange().start || !timeRange().end) {
@@ -136,15 +129,15 @@ const ArchiveViewer = () => {
       }
 
       const duration = timeRange().end.getTime() - timeRange().start.getTime();
-      let operator: string | null = null;
+      let operator: string | null = currentOperator();
 
       // Only use optimized for longer time ranges
       if (duration > 60 * 60 * 1000) {
-        operator = currentOperator();
+        operator = getOperatorForTimeRange(duration);
       }
 
       addDebugLog("Fetching data...", "debug", {
-        pvs: selectedPVs(),
+        pvs: pvs.map(pv => pv.name),
         timeRange: {
           start: timeRange().start.toISOString(),
           end: timeRange().end.toISOString(),
@@ -155,7 +148,7 @@ const ArchiveViewer = () => {
       });
 
       const responseData = await fetchBinnedData(
-        selectedPVs(),
+        pvs.map(pv => pv.name),
         timeRange().start,
         timeRange().end,
         {
@@ -166,7 +159,11 @@ const ArchiveViewer = () => {
       );
 
       if (Array.isArray(responseData) && responseData.length > 0) {
-        setData(responseData);
+        const dataWithProps = responseData.map((data, index) => ({
+          ...data,
+          pen: pvs[index].pen
+        }));
+        setData(dataWithProps);
         setError(null);
         setLastRefresh(new Date());
 
@@ -180,7 +177,6 @@ const ArchiveViewer = () => {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(errorMessage);
       addDebugLog(errorMessage, "error", { error: err });
-      // No retries - just show the error
     }
   };
 
@@ -198,12 +194,27 @@ const ArchiveViewer = () => {
   ) => {
     setTimeRange({ start, end });
     setCurrentOperator(operator);
-    addDebugLog("Time range updated", "info", {
-      start: start.toISOString(),
-      end: end.toISOString(),
-      operator,
-      duration: `${(end.getTime() - start.getTime()) / (1000 * 60 * 60)} hours`,
-    });
+    handleRefresh();
+  };
+
+  const handleAddPV = (pv: string, properties: PenProperties) => {
+    setSelectedPVs(prev => [...prev, { name: pv, pen: properties }]);
+    addDebugLog(`Added PV: ${pv}`, "info");
+    handleRefresh();
+  };
+
+  const handleUpdatePV = (pv: string, properties: PenProperties) => {
+    setSelectedPVs(prev => prev.map(p => 
+      p.name === pv ? { ...p, pen: properties } : p
+    ));
+    addDebugLog(`Updated PV properties: ${pv}`, "info");
+    handleRefresh();
+  };
+
+  const handleRemovePV = (pv: string) => {
+    setSelectedPVs(prev => prev.filter(p => p.name !== pv));
+    addDebugLog(`Removed PV: ${pv}`, "info");
+    handleRefresh();
   };
 
   // Auto-refresh Effect
@@ -236,14 +247,9 @@ const ArchiveViewer = () => {
           </div>
           <PVSelector
             selectedPVs={selectedPVs}
-            onAddPV={(pv) => {
-              setSelectedPVs((prev) => [...prev, pv]);
-              addDebugLog(`Added PV: ${pv}`, "info");
-            }}
-            onRemovePV={(pv) => {
-              setSelectedPVs((prev) => prev.filter((p) => p !== pv));
-              addDebugLog(`Removed PV: ${pv}`, "info");
-            }}
+            onAddPV={handleAddPV}
+            onUpdatePV={handleUpdatePV}
+            onRemovePV={handleRemovePV}
           />
         </div>
 
@@ -268,8 +274,8 @@ const ArchiveViewer = () => {
                 onClick={handleRefresh}
                 disabled={loading()}
                 class="px-4 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 
-               disabled:opacity-50 disabled:cursor-not-allowed 
-               transition-colors flex items-center justify-center gap-2"
+                       disabled:opacity-50 disabled:cursor-not-allowed 
+                       transition-colors flex items-center justify-center gap-2"
               >
                 {loading() ? (
                   <>
@@ -307,7 +313,7 @@ const ArchiveViewer = () => {
               {data().length > 0 ? (
                 <EPICSChart
                   data={data()}
-                  pvs={selectedPVs()}
+                  pvs={selectedPVs().map(pv => ({ name: pv.name, pen: pv.pen }))}
                   timeRange={timeRange()}
                   timezone={timezone()}
                 />
@@ -341,11 +347,13 @@ const ArchiveViewer = () => {
         </div>
       </div>
 
-      {/* <DebugDialog
-        isOpen={showDebugData()}
-        onClose={() => setShowDebugData(false)}
-        data={data()}
-      /> */}
+      {showDebugData() && (
+        <DebugDialog
+          isOpen={showDebugData()}
+          onClose={() => setShowDebugData(false)}
+          data={data()}
+        />
+      )}
     </div>
   );
 };

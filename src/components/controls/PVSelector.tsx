@@ -1,26 +1,34 @@
 import { createSignal } from 'solid-js';
+import type { PVWithProperties, PenProperties } from '../../types';
+import { DEFAULT_PEN_PROPERTIES } from '../../types';
+import { PenPropertiesDialog } from '../../components/dialogs/PenPropertiesDialog';
 
 type PVSelectorProps = {
-  selectedPVs: () => string[];
-  onAddPV: (pv: string) => void;
+  selectedPVs: () => PVWithProperties[];
+  onAddPV: (pv: string, properties: PenProperties) => void;
+  onUpdatePV: (pv: string, properties: PenProperties) => void;
   onRemovePV: (pv: string) => void;
 };
 
-const PVSelector = (props: PVSelectorProps) => {
-  // Add default PV on component mount
+export function PVSelector(props: PVSelectorProps) {
   const defaultPV = "ROOM:LI30:1:OUTSIDE_TEMP";
   if (props.selectedPVs().length === 0) {
-    props.onAddPV(defaultPV);
+    props.onAddPV(defaultPV, DEFAULT_PEN_PROPERTIES);
   }
  
   const [searchText, setSearchText] = createSignal('');
+  const [editingPV, setEditingPV] = createSignal<string | null>(null);
 
   const handleSearch = (e: Event) => {
     e.preventDefault();
     if (searchText().trim()) {
-      props.onAddPV(searchText().trim());
+      props.onAddPV(searchText().trim(), DEFAULT_PEN_PROPERTIES);
       setSearchText('');
     }
+  };
+
+  const handleEditProperties = (pv: PVWithProperties) => {
+    setEditingPV(pv.name);
   };
 
   return (
@@ -48,10 +56,23 @@ const PVSelector = (props: PVSelectorProps) => {
         ) : (
           <ul class="space-y-2">
             {props.selectedPVs().map(pv => (
-              <li class="flex justify-between items-center p-2 bg-gray-50 rounded">
-                <span>{pv}</span>
+              <li class="flex items-center p-2 bg-gray-50 rounded">
+                <div 
+                  class="w-4 h-4 rounded mr-2" 
+                  style={{ 
+                    "background-color": pv.pen.color,
+                    "opacity": pv.pen.opacity 
+                  }}
+                />
+                <span class="flex-grow">{pv.name}</span>
                 <button
-                  onClick={() => props.onRemovePV(pv)}
+                  onClick={() => handleEditProperties(pv)}
+                  class="text-blue-500 hover:text-blue-700 mx-2"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => props.onRemovePV(pv.name)}
                   class="text-red-500 hover:text-red-700"
                 >
                   Remove
@@ -61,8 +82,21 @@ const PVSelector = (props: PVSelectorProps) => {
           </ul>
         )}
       </div>
+
+      {editingPV() && (
+        <PenPropertiesDialog
+          isOpen={true}
+          onClose={() => setEditingPV(null)}
+          pv={editingPV()!}
+          properties={props.selectedPVs().find(pv => pv.name === editingPV())?.pen || DEFAULT_PEN_PROPERTIES}
+          onSave={(properties) => {
+            props.onUpdatePV(editingPV()!, properties);
+            setEditingPV(null);
+          }}
+        />
+      )}
     </div>
   );
-};
+}
 
 export default PVSelector;
