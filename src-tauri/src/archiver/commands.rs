@@ -63,7 +63,7 @@ mod tests {
         set_archiver_url("http://lcls-archapp.slac.stanford.edu/retrieval/data".to_string());
 
         let client = ArchiverClient::new();
-        //println!("Archiver base URL: {}", client.base_url);
+        println!("Archiver base URL: {}", client.get_base_url());
 
         let from = SystemTime::now() - Duration::from_secs(600); // 10 minutes ago
         let to = SystemTime::now();

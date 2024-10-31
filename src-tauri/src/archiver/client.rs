@@ -29,6 +29,10 @@ impl ArchiverClient {
         }
     }
 
+    pub fn get_base_url(&self) -> &str {
+        &self.base_url
+    }
+
     /// Formats a `SystemTime` into the format expected by the archiver.
     fn format_date_for_archiver(date: SystemTime) -> String {
         let datetime: DateTime<Utc> = date.into();
