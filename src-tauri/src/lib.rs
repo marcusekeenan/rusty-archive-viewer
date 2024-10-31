@@ -2,7 +2,9 @@
 
 mod archiver;
 
-use archiver::{fetch_archiver_data, fetch_binned_data, set_archiver_url};
+use archiver::{
+    commands::{fetch_archiver_data, fetch_binned_data, set_archiver_url_command},
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,7 +13,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fetch_archiver_data,
             fetch_binned_data,
-            set_archiver_url
+            set_archiver_url_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
