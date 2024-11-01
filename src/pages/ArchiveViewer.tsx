@@ -236,7 +236,7 @@ const ArchiveViewer = () => {
 
   return (
     <div class="p-4">
-      <div class="grid grid-cols-[320px_auto_320px] gap-4">
+      <div class="grid grid-cols-[350px_auto_350px] gap-4">
         {/* Left Side - PV Selector */}
         <div class="bg-white rounded-lg shadow-md p-4">
           <div class="flex justify-between items-center mb-2">
