@@ -8,9 +8,8 @@ import {
 import PVSelector from "../components/controls/PVSelector";
 import TimeRangeSelector from "../components/controls/TimeRangeSelector";
 import EPICSChart from "../components/chart/EPICSChart";
-import { fetchBinnedData } from "../utils/archiverApi";
+import { fetchBinnedData, type ExtendedFetchOptions, type NormalizedPVData } from "../utils/archiverApi";
 import type { PVWithProperties, PenProperties } from "../types";
-import { DEFAULT_PEN_PROPERTIES } from "../types";
 
 // Constants
 const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
@@ -32,24 +31,7 @@ type DebugLog = {
 type DebugDialogProps = {
   isOpen: boolean;
   onClose: () => void;
-  data: any;
-};
-
-// Helper functions
-const getOperatorForTimeRange = (duration: number): string | null => {
-  if (duration <= 15 * 60 * 1000) { // <= 15 minutes
-    return null; // Raw data
-  } else if (duration <= 2 * 60 * 60 * 1000) { // <= 2 hours
-    return "optimized_720"; // ~10s resolution
-  } else if (duration <= 6 * 60 * 60 * 1000) { // <= 6 hours
-    return "optimized_720"; // ~30s resolution
-  } else if (duration <= 24 * 60 * 60 * 1000) { // <= 24 hours
-    return "optimized_1440"; // ~1min resolution
-  } else if (duration <= 7 * 24 * 60 * 60 * 1000) { // <= 7 days
-    return "optimized_2016"; // ~5min resolution
-  } else {
-    return "optimized_4320"; // ~10min resolution
-  }
+  data: NormalizedPVData[];
 };
 
 // Debug Dialog Component
@@ -57,9 +39,7 @@ const DebugDialog = (props: DebugDialogProps) => (
   <Dialog
     open={props.isOpen}
     onOpenChange={(isOpen) => {
-      if (!isOpen) {
-        props.onClose();
-      }
+      if (!isOpen) props.onClose();
     }}
   >
     <DialogContent class="max-w-4xl max-h-[80vh]">
@@ -85,14 +65,11 @@ const ArchiveViewer = () => {
   // State Management
   const [selectedPVs, setSelectedPVs] = createSignal<PVWithProperties[]>([]);
   const [timeRange, setTimeRange] = createSignal<TimeRange>({
-    start: new Date(),
+    start: new Date(Date.now() - 3600000), // Last hour by default
     end: new Date(),
   });
-  const [timezone, setTimezone] = createSignal<string>(
-    Intl.DateTimeFormat().resolvedOptions().timeZone
-  );
-  const [currentOperator, setCurrentOperator] = createSignal<string | null>(null);
-  const [data, setData] = createSignal<any[]>([]);
+  const [currentOptions, setCurrentOptions] = createSignal<ExtendedFetchOptions>({});
+  const [data, setData] = createSignal<NormalizedPVData[]>([]);
   const [loading, setLoading] = createSignal<boolean>(false);
   const [error, setError] = createSignal<string | null>(null);
   const [debugLogs, setDebugLogs] = createSignal<DebugLog[]>([]);
@@ -124,45 +101,41 @@ const ArchiveViewer = () => {
       if (pvs.length === 0) {
         throw new Error("No PVs selected");
       }
-      if (!timeRange().start || !timeRange().end) {
+
+      const range = timeRange();
+      if (!range.start || !range.end) {
         throw new Error("Invalid time range");
-      }
-
-      const duration = timeRange().end.getTime() - timeRange().start.getTime();
-      let operator: string | null = currentOperator();
-
-      // Only use optimized for longer time ranges
-      if (duration > 60 * 60 * 1000) {
-        operator = getOperatorForTimeRange(duration);
       }
 
       addDebugLog("Fetching data...", "debug", {
         pvs: pvs.map(pv => pv.name),
         timeRange: {
-          start: timeRange().start.toISOString(),
-          end: timeRange().end.toISOString(),
-          durationHours: duration / (1000 * 60 * 60),
+          start: range.start.toISOString(),
+          end: range.end.toISOString(),
+          durationHours: (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60),
         },
-        operator,
-        timezone: timezone(),
+        options: currentOptions(),
       });
+
+      const options: ExtendedFetchOptions = {
+        ...currentOptions(),
+        chart_width: chartContainer?.clientWidth || 1000,
+      };
 
       const responseData = await fetchBinnedData(
         pvs.map(pv => pv.name),
-        timeRange().start,
-        timeRange().end,
-        {
-          operator: operator || undefined,
-          timezone: timezone(),
-          chartWidth: chartContainer?.clientWidth || 1000,
-        }
+        range.start,
+        range.end,
+        options
       );
 
       if (Array.isArray(responseData) && responseData.length > 0) {
+        // Merge PV properties with the response data
         const dataWithProps = responseData.map((data, index) => ({
           ...data,
           pen: pvs[index].pen
         }));
+        
         setData(dataWithProps);
         setError(null);
         setLastRefresh(new Date());
@@ -190,10 +163,10 @@ const ArchiveViewer = () => {
   const handleTimeRangeChange = (
     start: Date,
     end: Date,
-    operator: string | null
+    options: ExtendedFetchOptions
   ) => {
     setTimeRange({ start, end });
-    setCurrentOperator(operator);
+    setCurrentOptions(options);
     handleRefresh();
   };
 
@@ -311,12 +284,12 @@ const ArchiveViewer = () => {
               class="w-full max-w-screen-xl mx-auto h-[calc(100vh-240px)] relative overflow-hidden"
             >
               {data().length > 0 ? (
-                <EPICSChart
-                  data={data()}
-                  pvs={selectedPVs().map(pv => ({ name: pv.name, pen: pv.pen }))}
-                  timeRange={timeRange()}
-                  timezone={timezone()}
-                />
+              <EPICSChart
+                data={data()}
+                pvs={selectedPVs().map(pv => ({ name: pv.name, pen: pv.pen }))}
+                timeRange={timeRange()}
+                timezone={currentOptions().timezone || 'UTC'} // Provide default timezone
+              />
               ) : (
                 <div class="absolute inset-0 flex items-center justify-center text-gray-400">
                   No data to display
@@ -330,18 +303,14 @@ const ArchiveViewer = () => {
         <div class="bg-white rounded-lg shadow-md p-4">
           <div class="flex justify-between items-center mb-2">
             <h2 class="text-lg font-semibold">Time Range</h2>
-            {currentOperator() && (
+            {currentOptions().operator && (
               <span class="text-sm text-gray-500">
-                Using {currentOperator()} operator
+                Using {currentOptions().operator} operator
               </span>
             )}
           </div>
           <TimeRangeSelector
             onChange={handleTimeRangeChange}
-            onTimezoneChange={(tz) => {
-              setTimezone(tz);
-              addDebugLog(`Timezone changed to ${tz}`, "info");
-            }}
             disabled={loading()}
           />
         </div>

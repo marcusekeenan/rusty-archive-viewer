@@ -6,8 +6,8 @@ import type { PVWithProperties } from '../../types';
 type EPICSChartProps = {
   data: any[];
   pvs: PVWithProperties[];
-  timeRange: { start: Date | null; end: Date | null };
-  timezone: string;
+  timeRange: { start: Date; end: Date };
+  timezone: string;  // Required string without undefined
 };
 
 const EPICSChart = (props: EPICSChartProps) => {

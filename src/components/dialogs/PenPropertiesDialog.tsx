@@ -2,15 +2,16 @@ import { createSignal } from 'solid-js';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import type { PenProperties } from '../../types';
 
-export interface PenPropertiesDialogProps {
+type PenPropertiesDialogProps = {
   isOpen: boolean;
   onClose: () => void;
   pv: string;
   properties: PenProperties;
   onSave: (properties: PenProperties) => void;
-}
+};
 
-export function PenPropertiesDialog(props: PenPropertiesDialogProps) {
+// Change to default export
+export default function PenPropertiesDialog(props: PenPropertiesDialogProps) {
   const [properties, setProperties] = createSignal(props.properties);
 
   const handleSave = () => {

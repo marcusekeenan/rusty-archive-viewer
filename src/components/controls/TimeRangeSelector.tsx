@@ -1,10 +1,8 @@
-// TimeRangeSelector.tsx
-
 import { createSignal, createEffect, For } from 'solid-js';
+import type { ExtendedFetchOptions } from '../../utils/archiverApi';
 
 type TimeRangeSelectorProps = {
-  onChange: (start: Date, end: Date, operator: string | null) => void;
-  onTimezoneChange?: (timezone: string) => void;
+  onChange: (start: Date, end: Date, options: ExtendedFetchOptions) => void;
   disabled?: boolean;
 };
 
@@ -12,6 +10,7 @@ type TimeRangeOption = {
   value: string;
   label: string;
   operator: string | null;
+  binSize?: number;  // bin size in seconds
 };
 
 const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
@@ -34,62 +33,71 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
     'Asia/Tokyo',
   ];
 
+  // Updated time ranges with appropriate operators and bin sizes
   const timeRanges: TimeRangeOption[] = [
     {
       value: 'custom',
       label: 'Custom Range',
-      operator: null,
+      operator: null
     },
     {
       value: '15m',
       label: 'Last 15 Minutes',
-      operator: null, // Raw data for short ranges
+      operator: 'raw'  // Raw data for short ranges
     },
     {
       value: '30m',
       label: 'Last 30 Minutes',
-      operator: null,
+      operator: 'raw'
     },
     {
       value: '1h',
       label: 'Last Hour',
-      operator: 'optimized_360', // 10-second resolution
+      operator: 'mean',
+      binSize: 10  // 10-second bins
     },
     {
       value: '3h',
       label: 'Last 3 Hours',
-      operator: 'optimized_1080', // 10-second resolution
+      operator: 'mean',
+      binSize: 30  // 30-second bins
     },
     {
       value: '6h',
       label: 'Last 6 Hours',
-      operator: 'optimized_720', // 30-second resolution
+      operator: 'mean',
+      binSize: 60  // 1-minute bins
     },
     {
       value: '12h',
       label: 'Last 12 Hours',
-      operator: 'optimized_720',
+      operator: 'mean',
+      binSize: 120  // 2-minute bins
     },
     {
       value: '24h',
       label: 'Last 24 Hours',
-      operator: 'optimized_1440', // 1-minute resolution
+      operator: 'mean',
+      binSize: 300  // 5-minute bins
     },
     {
       value: '2d',
       label: 'Last 2 Days',
-      operator: 'optimized_2880',
+      operator: 'mean',
+      binSize: 600  // 10-minute bins
     },
     {
       value: '7d',
       label: 'Last Week',
-      operator: 'optimized_2016', // 5-minute resolution with statistics
+      operator: 'mean',
+      binSize: 900  // 15-minute bins
     },
     {
       value: '30d',
       label: 'Last 30 Days',
-      operator: 'optimized_4320', // 10-minute resolution with statistics
-    },
+      operator: 'mean',
+      binSize: 3600  // 1-hour bins
+    }
   ];
 
   const getRelativeTimeRange = (value: string) => {
@@ -97,7 +105,7 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
     const start = new Date(now);
     const match = value.match(/^(\d+)([mhd])$/);
 
-    if (!match) return { start: now, end: now, operator: null };
+    if (!match) return { start: now, end: now, options: {} as ExtendedFetchOptions };
 
     const [_, amount, unit] = match;
     const num = parseInt(amount);
@@ -114,37 +122,32 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
         break;
     }
 
-    return {
-      start,
-      end: now,
-      operator: timeRanges.find((r) => r.value === value)?.operator || null,
+    const timeRange = timeRanges.find((r) => r.value === value);
+    const options: ExtendedFetchOptions = {
+      operator: timeRange?.operator ?? undefined, // Convert null to undefined
+      timezone: timezone(),
+      chart_width: window.innerWidth,  // Dynamic chart width
     };
-  };
+
+    // Add bin size if specified
+    if (timeRange?.operator === 'mean' && timeRange?.binSize) {
+      options.operator = `mean_${timeRange.binSize}`;
+    }
+
+    return { start, end: now, options };
+};
 
   const formatForInput = (date: Date | null): string => {
     if (!date) return '';
-    const d = new Date(date);
-    return (
-      d.getFullYear() +
-      '-' +
-      String(d.getMonth() + 1).padStart(2, '0') +
-      '-' +
-      String(d.getDate()).padStart(2, '0') +
-      'T' +
-      String(d.getHours()).padStart(2, '0') +
-      ':' +
-      String(d.getMinutes()).padStart(2, '0') +
-      ':' +
-      String(d.getSeconds()).padStart(2, '0')
-    );
+    return date.toISOString().slice(0, 19);  // Format: YYYY-MM-DDTHH:mm:ss
   };
 
-  const updateTimeRange = (start: Date, end: Date, operator: string | null = null) => {
+  const updateTimeRange = (start: Date, end: Date, options: ExtendedFetchOptions) => {
     setStartDate(formatForInput(start));
     setEndDate(formatForInput(end));
 
     if (props.onChange) {
-      props.onChange(start, end, operator);
+      props.onChange(start, end, options);
     }
   };
 
@@ -152,17 +155,23 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
     setRelativeRange(value);
     if (value === 'custom') return;
 
-    const { start, end, operator } = getRelativeTimeRange(value);
-    updateTimeRange(start, end, operator);
+    const { start, end, options } = getRelativeTimeRange(value);
+    updateTimeRange(start, end, options);
   };
 
   const handleDateInput = (isStart: boolean, value: string) => {
     if (isStart) {
       setStartDate(value);
-      updateTimeRange(new Date(value), new Date(endDate()));
+      updateTimeRange(new Date(value), new Date(endDate()), {
+        timezone: timezone(),
+        operator: 'raw'  // Default to raw data for custom ranges
+      });
     } else {
       setEndDate(value);
-      updateTimeRange(new Date(startDate()), new Date(value));
+      updateTimeRange(new Date(startDate()), new Date(value), {
+        timezone: timezone(),
+        operator: 'raw'
+      });
     }
     setRelativeRange('custom');
   };
@@ -170,15 +179,18 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
   const handleTimezoneChange = (e: Event) => {
     const tz = (e.target as HTMLSelectElement).value;
     setTimezone(tz);
-    if (props.onTimezoneChange) {
-      props.onTimezoneChange(tz);
+    
+    // Update time range with new timezone
+    if (relativeRange() !== 'custom') {
+      const { start, end, options } = getRelativeTimeRange(relativeRange());
+      updateTimeRange(start, end, { ...options, timezone: tz });
     }
   };
 
   // Initialize the time range
   createEffect(() => {
-    const { start, end, operator } = getRelativeTimeRange(relativeRange());
-    updateTimeRange(start, end, operator);
+    const { start, end, options } = getRelativeTimeRange(relativeRange());
+    updateTimeRange(start, end, options);
   });
 
   return (
