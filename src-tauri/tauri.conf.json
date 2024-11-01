@@ -7,12 +7,31 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "rusty-archive-viewer",
+    "productName": "EPICS Archive Viewer",
     "version": "0.1.0"
   },
   "tauri": {
     "allowlist": {
-      "all": false
+      "all": false,
+      "http": {
+        "all": true,
+        "request": true,
+        "scope": [
+          "http://lcls-archapp.slac.stanford.edu/*",
+          "https://lcls-archapp.slac.stanford.edu/*"
+        ]
+      },
+      "window": {
+        "all": false,
+        "close": true,
+        "hide": true,
+        "show": true,
+        "maximize": true,
+        "minimize": true,
+        "unmaximize": true,
+        "unminimize": true,
+        "startDragging": true
+      }
     },
     "bundle": {
       "active": true,
@@ -29,7 +48,7 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "identifier": "com.tauri.dev",
+      "identifier": "org.epics.archiver-viewer",
       "longDescription": "",
       "macOS": {
         "entitlements": null,
@@ -56,10 +75,11 @@
     "windows": [
       {
         "fullscreen": false,
-        "height": 600,
+        "height": 800,
         "resizable": true,
-        "title": "rusty-archive-viewer",
-        "width": 800
+        "title": "EPICS Archive Viewer",
+        "width": 1200,
+        "decorations": true
       }
     ]
   }

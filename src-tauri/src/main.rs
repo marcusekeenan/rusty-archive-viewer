@@ -1,17 +1,29 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod archiver;
-
-use tauri::Manager;
-use crate::archiver::commands::*;
+use rusty_archive_viewer::archiver::commands::*;
+use tauri::{Manager, Window};
 
 fn main() {
+    let context = tauri::generate_context!();
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            fetch_pv_data,
             fetch_binned_data,
             get_pv_metadata,
         ])
-        .run(tauri::generate_context!())
+        .setup(|app| {
+            #[cfg(debug_assertions)]
+            {
+                if let Some(window) = app.get_window("main") {
+                    window.open_devtools();
+                }
+            }
+            Ok(())
+        })
+        .menu(if cfg!(target_os = "macos") {
+            tauri::Menu::os_default(&context.package_info().name)
+        } else {
+            tauri::Menu::default()
+        })
+        .run(context)
         .expect("error while running tauri application");
 }

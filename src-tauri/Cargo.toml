@@ -1,23 +1,66 @@
 [package]
 name = "rusty-archive-viewer"
 version = "0.1.0"
+description = "EPICS Archive Viewer"
 authors = ["Your Name"]
+license = ""
+repository = ""
 edition = "2021"
 
 [build-dependencies]
-tauri-build = { version = "1.5", features = [] }
+tauri-build = { version = "1.4", features = [] }
 
 [dependencies]
-tauri = { version = "1.5", features = [] }
-serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.11", features = ["json", "gzip", "brotli", "deflate", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "1.4", features = [ 
+    "window-unminimize", 
+    "window-hide", 
+    "window-unmaximize", 
+    "window-close", 
+    "http-all", 
+    "window-maximize", 
+    "window-start-dragging", 
+    "window-minimize", 
+    "window-show"
+] }
+reqwest = { version = "0.11", features = [
+    "json",
+    "gzip",
+    "brotli",
+    "deflate",
+    "stream",
+    "rustls-tls"
+] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
-lazy_static = "1.4"
-tokio = { version = "1.0", features = ["full"] }
 once_cell = "1.8"
+futures = "0.3"
+tokio = { version = "1.0", features = [
+    "macros",
+    "rt-multi-thread",
+    "time",
+    "sync"
+] }
+url = "2.2.2"
+csv = "1.1"
+
+[dev-dependencies]
+pretty_assertions = "1.3"
+tokio = { version = "1.0", features = ["full", "test-util"] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# Optimize for development
+[profile.dev]
+opt-level = 1
+
+# Optimize for release
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+incremental = false
+opt-level = 3
