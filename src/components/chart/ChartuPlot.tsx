@@ -11,7 +11,7 @@ type EPICSChartProps = {
   timezone: string;
 };
 
-export default function EPICSChart(props: EPICSChartProps) {
+export default function ChartuPlot(props: EPICSChartProps) {
   let chartRef: HTMLDivElement | undefined;
   let uPlotInstance: uPlot | null = null;
 

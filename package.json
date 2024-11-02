@@ -22,7 +22,10 @@
     "solid-js": "^1.7.8",
     "solid-transition-group": "^0.2.3",
     "tailwind-merge": "^2.0.0",
-    "uplot": "^1.6.24"
+    "uplot": "^1.6.24",
+    "chart.js": "^4.4.0",
+    "chartjs-adapter-date-fns": "^3.0.0",
+    "chartjs-plugin-zoom": "^2.0.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.5.6",

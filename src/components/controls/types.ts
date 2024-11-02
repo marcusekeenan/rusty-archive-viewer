@@ -19,7 +19,7 @@ export type PenProperties = {
     opacity: 1,
     lineWidth: 2,
     style: 'solid',
-    showPoints: true,
+    showPoints: false,
     pointSize: 4,
   };
 

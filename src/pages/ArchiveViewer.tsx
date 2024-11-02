@@ -1,5 +1,5 @@
 // ArchiveViewer.tsx
-import { createSignal, createEffect, onCleanup } from "solid-js";
+import { createSignal, createEffect, onCleanup, Show } from "solid-js";
 import {
   Dialog,
   DialogContent,
@@ -8,9 +8,17 @@ import {
 } from "../components/ui/dialog";
 import PVSelector from "../components/controls/PVSelector";
 import TimeRangeSelector from "../components/controls/TimeRangeSelector";
-import EPICSChart from "../components/chart/EPICSChart";
-import { fetchBinnedData, type ExtendedFetchOptions, type NormalizedPVData } from "../utils/archiverApi";
-import type { PVWithProperties, PenProperties } from "../components/controls/types";
+import ChartJS from "../components/chart/ChartJS";
+import ChartuPlot from "../components/chart/ChartuPlot"; // Change this import
+import {
+  fetchBinnedData,
+  type ExtendedFetchOptions,
+  type NormalizedPVData,
+} from "../utils/archiverApi";
+import type {
+  PVWithProperties,
+  PenProperties,
+} from "../components/controls/types";
 
 // Constants
 const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
@@ -36,7 +44,10 @@ type DebugDialogProps = {
 
 // Debug Dialog Component
 const DebugDialog = (props: DebugDialogProps) => (
-  <Dialog open={props.isOpen} onOpenChange={(isOpen) => !isOpen && props.onClose()}>
+  <Dialog
+    open={props.isOpen}
+    onOpenChange={(isOpen) => !isOpen && props.onClose()}
+  >
     <DialogContent class="max-w-4xl max-h-[80vh]">
       <DialogHeader>
         <DialogTitle>Debug Information</DialogTitle>
@@ -61,7 +72,8 @@ export default function ArchiveViewer() {
     start: new Date(Date.now() - 3600000), // Last hour by default
     end: new Date(),
   });
-  const [currentOptions, setCurrentOptions] = createSignal<ExtendedFetchOptions>({});
+  const [currentOptions, setCurrentOptions] =
+    createSignal<ExtendedFetchOptions>({});
   const [data, setData] = createSignal<NormalizedPVData[]>([]);
   const [loading, setLoading] = createSignal<boolean>(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -70,11 +82,14 @@ export default function ArchiveViewer() {
   const [autoRefresh, setAutoRefresh] = createSignal<boolean>(false);
   const [lastRefresh, setLastRefresh] = createSignal<Date | null>(null);
 
+  type ChartType = "chartjs" | "uplot";
+  const [selectedChart, setSelectedChart] = createSignal<ChartType>("chartjs");
+
   // Computed value for visible data
   const visibleData = () => {
     const allData = data();
     const visiblePVNames = visiblePVs();
-    return allData.filter(pv => visiblePVNames.has(pv.meta.name));
+    return allData.filter((pv) => visiblePVNames.has(pv.meta.name));
   };
 
   // Debug Logging
@@ -96,7 +111,7 @@ export default function ArchiveViewer() {
 
   // Handle PV visibility toggle
   const handlePVVisibilityToggle = (pvName: string, isVisible: boolean) => {
-    setVisiblePVs(prev => {
+    setVisiblePVs((prev) => {
       const newSet = new Set(prev);
       if (isVisible) {
         newSet.add(pvName);
@@ -127,7 +142,7 @@ export default function ArchiveViewer() {
       };
 
       const responseData = await fetchBinnedData(
-        pvs.map(pv => pv.name),
+        pvs.map((pv) => pv.name),
         range.start,
         range.end,
         options
@@ -136,9 +151,9 @@ export default function ArchiveViewer() {
       if (Array.isArray(responseData) && responseData.length > 0) {
         const dataWithProps = responseData.map((data, index) => ({
           ...data,
-          pen: pvs[index].pen
+          pen: pvs[index].pen,
         }));
-        
+
         setData(dataWithProps);
         setError(null);
         setLastRefresh(new Date());
@@ -170,23 +185,23 @@ export default function ArchiveViewer() {
   };
 
   const handleAddPV = (pv: string, properties: PenProperties) => {
-    setSelectedPVs(prev => [...prev, { name: pv, pen: properties }]);
-    setVisiblePVs(prev => new Set(prev).add(pv));
+    setSelectedPVs((prev) => [...prev, { name: pv, pen: properties }]);
+    setVisiblePVs((prev) => new Set(prev).add(pv));
     addDebugLog(`Added PV: ${pv}`, "info");
     handleRefresh();
   };
 
   const handleUpdatePV = (pv: string, properties: PenProperties) => {
-    setSelectedPVs(prev => prev.map(p => 
-      p.name === pv ? { ...p, pen: properties } : p
-    ));
+    setSelectedPVs((prev) =>
+      prev.map((p) => (p.name === pv ? { ...p, pen: properties } : p))
+    );
     addDebugLog(`Updated PV properties: ${pv}`, "info");
     handleRefresh();
   };
 
   const handleRemovePV = (pv: string) => {
-    setSelectedPVs(prev => prev.filter(p => p.name !== pv));
-    setVisiblePVs(prev => {
+    setSelectedPVs((prev) => prev.filter((p) => p.name !== pv));
+    setVisiblePVs((prev) => {
       const newSet = new Set(prev);
       newSet.delete(pv);
       return newSet;
@@ -273,24 +288,68 @@ export default function ArchiveViewer() {
 
           {/* Chart */}
           <div class="bg-white rounded-lg shadow-md p-4">
-          <div>CHART</div>
+            {/* Chart Type Selector */}
+            <div class="flex items-center gap-2 mb-4 border-b">
+              <button
+                class={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                  selectedChart() === "chartjs"
+                    ? "text-blue-600 border-b-2 border-blue-600 -mb-px"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+                onClick={() => setSelectedChart("chartjs")}
+              >
+                Chart.js
+              </button>
+              <button
+                class={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                  selectedChart() === "uplot"
+                    ? "text-blue-600 border-b-2 border-blue-600 -mb-px"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+                onClick={() => setSelectedChart("uplot")}
+              >
+                µPlot
+              </button>
+            </div>
+
+            {/* Error Display */}
             {error() && (
-              <div class="mb-4 p-6 bg-red-100 text-red-700 rounded border border-red-200">
+              <div class="mb-4 p-4 bg-red-100 text-red-700 rounded border border-red-200">
                 <div class="font-semibold">Error</div>
                 <div class="text-sm">{error()}</div>
               </div>
             )}
+
+            {/* Chart Container */}
             <div
               ref={chartContainer}
-              class="w-full mx-auto h-[calc(100vh-240px)] relative overflow-hidden"
+              class="w-full mx-auto h-[calc(100vh-290px)] relative overflow-hidden"
             >
               {data().length > 0 ? (
-                <EPICSChart
-                  data={visibleData()}
-                  pvs={selectedPVs().map(pv => ({ name: pv.name, pen: pv.pen }))}
-                  timeRange={timeRange()}
-                  timezone={currentOptions().timezone || 'UTC'}
-                />
+                <Show
+                  when={selectedChart() === "chartjs"}
+                  fallback={
+                    <ChartuPlot
+                      data={visibleData()}
+                      pvs={selectedPVs().map((pv) => ({
+                        name: pv.name,
+                        pen: pv.pen,
+                      }))}
+                      timeRange={timeRange()}
+                      timezone={currentOptions().timezone || "UTC"}
+                    />
+                  }
+                >
+                  <ChartJS
+                    data={visibleData()}
+                    pvs={selectedPVs().map((pv) => ({
+                      name: pv.name,
+                      pen: pv.pen,
+                    }))}
+                    timeRange={timeRange()}
+                    timezone={currentOptions().timezone || "UTC"}
+                  />
+                </Show>
               ) : (
                 <div class="absolute inset-0 flex items-center justify-center text-gray-400">
                   No data to display
