@@ -1,5 +1,5 @@
 // ArchiveViewer.tsx
-import { createSignal, createEffect, onCleanup, Show } from "solid-js";
+import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +23,22 @@ import type {
 // Constants
 const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
 const DEBUG_LOG_LIMIT = 50;
+
+const DISPLAY_MODES = [
+  { value: "raw", label: "Raw Data" },
+  { value: "firstSample", label: "First Sample" },
+  { value: "lastSample", label: "Last Sample" },
+  { value: "firstFill", label: "First Fill (with interpolation)" },
+  { value: "lastFill", label: "Last Fill (with interpolation)" },
+  { value: "mean", label: "Mean Value" },
+  { value: "min", label: "Minimum Value" },
+  { value: "max", label: "Maximum Value" },
+  { value: "count", label: "Sample Count" },
+  { value: "median", label: "Median Value" },
+  { value: "std", label: "Standard Deviation" },
+] as const;
+
+type ProcessingMode = (typeof DISPLAY_MODES)[number]["value"];
 
 type TimeRange = {
   start: Date;
@@ -84,6 +100,14 @@ export default function ArchiveViewer() {
 
   type ChartType = "chartjs" | "uplot";
   const [selectedChart, setSelectedChart] = createSignal<ChartType>("chartjs");
+  // Add this with your other state declarations
+  const [processingMode, setProcessingMode] =
+    createSignal<ProcessingMode>("mean");
+
+  const totalPoints = () => {
+    const allData = visibleData();
+    return allData.reduce((sum, pv) => sum + (pv.data?.length || 0), 0);
+  };
 
   // Computed value for visible data
   const visibleData = () => {
@@ -139,6 +163,7 @@ export default function ArchiveViewer() {
       const options: ExtendedFetchOptions = {
         ...currentOptions(),
         chart_width: chartContainer?.clientWidth || 1000,
+        operator: processingMode(), // Add this line
       };
 
       const responseData = await fetchBinnedData(
@@ -245,44 +270,78 @@ export default function ArchiveViewer() {
         {/* Middle Section - Controls and Chart */}
         <div class="space-y-4">
           {/* Control Buttons */}
-          <div class="bg-white rounded-lg shadow-md p-2">
-            <div class="flex justify-end gap-2">
-              <button
-                onClick={() => setAutoRefresh(!autoRefresh())}
-                class={`px-4 py-1.5 rounded text-white transition-colors ${
-                  autoRefresh()
-                    ? "bg-red-500 hover:bg-red-600"
-                    : "bg-green-500 hover:bg-green-600"
-                }`}
-                disabled={loading()}
-              >
-                {autoRefresh() ? "Stop Auto-refresh" : "Start Auto-refresh"}
-              </button>
+          <div class="bg-white rounded-lg shadow-md p-4">
+            <div class="flex flex-col gap-4">
+              {/* Processing Mode Selector */}
+              <div class="flex gap-4 items-center">
+                <div class="w-64">
+                  <label class="block mb-2 text-sm font-medium text-gray-700">
+                    Display Mode
+                  </label>
+                  <select
+                    value={processingMode()}
+                    onChange={(e) => {
+                      setProcessingMode(
+                        (e.target as HTMLSelectElement).value as ProcessingMode
+                      );
+                      handleRefresh();
+                    }}
+                    class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    disabled={loading()}
+                  >
+                    <For each={DISPLAY_MODES}>
+                      {(mode) => (
+                        <option value={mode.value}>{mode.label}</option>
+                      )}
+                    </For>
+                  </select>
+                </div>
 
-              <button
-                onClick={handleRefresh}
-                disabled={loading()}
-                class="px-4 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 
-                       disabled:opacity-50 disabled:cursor-not-allowed 
-                       transition-colors flex items-center justify-center gap-2"
-              >
-                {loading() ? (
-                  <>
-                    <div class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
-                    Fetching...
-                  </>
-                ) : (
-                  <span>Fetch Data</span>
-                )}
-              </button>
+                <div class="flex gap-2 items-center ml-auto">
+                  <button
+                    onClick={() => setAutoRefresh(!autoRefresh())}
+                    class={`px-4 py-1.5 rounded text-white transition-colors ${
+                      autoRefresh()
+                        ? "bg-red-500 hover:bg-red-600"
+                        : "bg-green-500 hover:bg-green-600"
+                    }`}
+                    disabled={loading()}
+                  >
+                    {autoRefresh() ? "Stop Auto-refresh" : "Start Auto-refresh"}
+                  </button>
 
-              <button
-                onClick={() => setShowDebugData(true)}
-                class="px-4 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
-                disabled={loading()}
-              >
-                View Raw Data
-              </button>
+                  <button
+                    onClick={handleRefresh}
+                    disabled={loading()}
+                    title={`Total points: ${totalPoints().toLocaleString()}`} // Add tooltip
+                    class="px-4 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 
+         disabled:opacity-50 disabled:cursor-not-allowed 
+         transition-colors flex items-center justify-center gap-2"
+                  >
+                    {loading() ? (
+                      <>
+                        <div class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                        Fetching...
+                      </>
+                    ) : (
+                      <div class="flex items-center gap-2">
+                        <span>Fetch Data</span>
+                        <span class="text-xs bg-blue-600 px-2 py-0.5 rounded">
+                          {totalPoints().toLocaleString()} pts
+                        </span>
+                      </div>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => setShowDebugData(true)}
+                    class="px-4 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+                    disabled={loading()}
+                  >
+                    View Raw Data
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 

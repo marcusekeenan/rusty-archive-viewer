@@ -223,17 +223,17 @@ export default function ChartJs(props: EPICSChartProps) {
         x: {
           type: 'time',
           time: {
-            unit: 'second',
+            unit: undefined,  // Changed from 'auto' to undefined
             displayFormats: {
-              millisecond: 'HH:mm:ss.SSS',
-              second: 'HH:mm:ss',
+              millisecond: 'mm:ss.SSS',
+              second: 'mm:ss',
               minute: 'HH:mm',
-              hour: 'MM/dd HH:mm',
-              day: 'MM/dd',
-              week: 'MM/dd',
-              month: 'yyyy/MM',
-              quarter: 'yyyy [Q]Q',
-              year: 'yyyy'
+              hour: 'HH:mm',
+              day: 'MMM D',
+              week: 'MMM D',
+              month: 'MMM YYYY',
+              quarter: '[Q]Q YYYY',
+              year: 'YYYY'
             },
           },
           adapters: {
@@ -242,21 +242,68 @@ export default function ChartJs(props: EPICSChartProps) {
             }
           },
           grid: {
-            color: 'rgba(0,0,0,0.1)'
+            color: 'rgba(0,0,0,0.05)',  // Lighter grid
+            tickLength: 0  // Remove tick marks
           },
           ticks: {
             maxRotation: 0,
+            autoSkip: true,
+            maxTicksLimit: 8,  // Limit number of ticks
+            padding: 8,
             font: {
               size: 11
+            },
+            major: {
+              enabled: true
+            },
+            // Custom callback to format time based on range
+            callback: (value, index, ticks) => {
+              const date = new Date(value);
+              const earliest = ticks[0]?.value || date;
+              const latest = ticks[ticks.length - 1]?.value || date;
+              const range = latest - earliest;
+              const hours = range / (1000 * 60 * 60);
+      
+              if (hours <= 1) {
+                return date.toLocaleTimeString(undefined, {
+                  hour: undefined,
+                  minute: '2-digit',
+                  second: '2-digit',
+                  timeZone: props.timezone
+                });
+              } else if (hours <= 24) {
+                return date.toLocaleTimeString(undefined, {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  timeZone: props.timezone
+                });
+              } else {
+                return date.toLocaleString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  timeZone: props.timezone
+                });
+              }
             }
+          },
+          border: {
+            display: false  // Remove axis line
           }
         },
         y: {
           beginAtZero: false,
           grid: {
-            color: 'rgba(0,0,0,0.1)'
+            color: 'rgba(0,0,0,0.05)',  // Lighter grid
+            tickLength: 0  // Remove tick marks
+          },
+          border: {
+            display: false  // Remove axis line
           },
           ticks: {
+            padding: 8,
+            maxTicksLimit: 8,  // Limit number of ticks
             callback: (value) => typeof value === 'number' ? value.toFixed(2) : value,
             font: {
               size: 11
