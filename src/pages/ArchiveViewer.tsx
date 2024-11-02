@@ -1,3 +1,4 @@
+// ArchiveViewer.tsx
 import { createSignal, createEffect, onCleanup } from "solid-js";
 import {
   Dialog,
@@ -9,13 +10,12 @@ import PVSelector from "../components/controls/PVSelector";
 import TimeRangeSelector from "../components/controls/TimeRangeSelector";
 import EPICSChart from "../components/chart/EPICSChart";
 import { fetchBinnedData, type ExtendedFetchOptions, type NormalizedPVData } from "../utils/archiverApi";
-import type { PVWithProperties, PenProperties } from "../types";
+import type { PVWithProperties, PenProperties } from "../components/controls/types";
 
 // Constants
 const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
 const DEBUG_LOG_LIMIT = 50;
 
-// Types
 type TimeRange = {
   start: Date;
   end: Date;
@@ -36,12 +36,7 @@ type DebugDialogProps = {
 
 // Debug Dialog Component
 const DebugDialog = (props: DebugDialogProps) => (
-  <Dialog
-    open={props.isOpen}
-    onOpenChange={(isOpen) => {
-      if (!isOpen) props.onClose();
-    }}
-  >
+  <Dialog open={props.isOpen} onOpenChange={(isOpen) => !isOpen && props.onClose()}>
     <DialogContent class="max-w-4xl max-h-[80vh]">
       <DialogHeader>
         <DialogTitle>Debug Information</DialogTitle>
@@ -57,13 +52,11 @@ const DebugDialog = (props: DebugDialogProps) => (
   </Dialog>
 );
 
-// Main Component
-const ArchiveViewer = () => {
-  // Refs
+export default function ArchiveViewer() {
   let chartContainer: HTMLDivElement | undefined;
 
-  // State Management
   const [selectedPVs, setSelectedPVs] = createSignal<PVWithProperties[]>([]);
+  const [visiblePVs, setVisiblePVs] = createSignal<Set<string>>(new Set());
   const [timeRange, setTimeRange] = createSignal<TimeRange>({
     start: new Date(Date.now() - 3600000), // Last hour by default
     end: new Date(),
@@ -76,6 +69,13 @@ const ArchiveViewer = () => {
   const [showDebugData, setShowDebugData] = createSignal<boolean>(false);
   const [autoRefresh, setAutoRefresh] = createSignal<boolean>(false);
   const [lastRefresh, setLastRefresh] = createSignal<Date | null>(null);
+
+  // Computed value for visible data
+  const visibleData = () => {
+    const allData = data();
+    const visiblePVNames = visiblePVs();
+    return allData.filter(pv => visiblePVNames.has(pv.meta.name));
+  };
 
   // Debug Logging
   const addDebugLog = (
@@ -94,6 +94,20 @@ const ArchiveViewer = () => {
     if (type === "debug") console.debug(message, details);
   };
 
+  // Handle PV visibility toggle
+  const handlePVVisibilityToggle = (pvName: string, isVisible: boolean) => {
+    setVisiblePVs(prev => {
+      const newSet = new Set(prev);
+      if (isVisible) {
+        newSet.add(pvName);
+      } else {
+        newSet.delete(pvName);
+      }
+      return newSet;
+    });
+    addDebugLog(`Toggled visibility for ${pvName}`, "debug", { isVisible });
+  };
+
   // Data Fetching Logic
   const fetchData = async () => {
     try {
@@ -106,16 +120,6 @@ const ArchiveViewer = () => {
       if (!range.start || !range.end) {
         throw new Error("Invalid time range");
       }
-
-      addDebugLog("Fetching data...", "debug", {
-        pvs: pvs.map(pv => pv.name),
-        timeRange: {
-          start: range.start.toISOString(),
-          end: range.end.toISOString(),
-          durationHours: (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60),
-        },
-        options: currentOptions(),
-      });
 
       const options: ExtendedFetchOptions = {
         ...currentOptions(),
@@ -130,7 +134,6 @@ const ArchiveViewer = () => {
       );
 
       if (Array.isArray(responseData) && responseData.length > 0) {
-        // Merge PV properties with the response data
         const dataWithProps = responseData.map((data, index) => ({
           ...data,
           pen: pvs[index].pen
@@ -139,10 +142,6 @@ const ArchiveViewer = () => {
         setData(dataWithProps);
         setError(null);
         setLastRefresh(new Date());
-
-        addDebugLog("Data fetch successful", "success", {
-          points: responseData[0]?.data?.length || 0,
-        });
       } else {
         throw new Error("No data received");
       }
@@ -172,6 +171,7 @@ const ArchiveViewer = () => {
 
   const handleAddPV = (pv: string, properties: PenProperties) => {
     setSelectedPVs(prev => [...prev, { name: pv, pen: properties }]);
+    setVisiblePVs(prev => new Set(prev).add(pv));
     addDebugLog(`Added PV: ${pv}`, "info");
     handleRefresh();
   };
@@ -186,6 +186,11 @@ const ArchiveViewer = () => {
 
   const handleRemovePV = (pv: string) => {
     setSelectedPVs(prev => prev.filter(p => p.name !== pv));
+    setVisiblePVs(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(pv);
+      return newSet;
+    });
     addDebugLog(`Removed PV: ${pv}`, "info");
     handleRefresh();
   };
@@ -195,15 +200,9 @@ const ArchiveViewer = () => {
     let interval: number | undefined;
     if (autoRefresh()) {
       interval = window.setInterval(handleRefresh, AUTO_REFRESH_INTERVAL);
-      addDebugLog("Auto-refresh enabled", "info", {
-        interval: AUTO_REFRESH_INTERVAL / 1000 + " seconds",
-      });
     }
     onCleanup(() => {
-      if (interval) {
-        clearInterval(interval);
-        addDebugLog("Auto-refresh disabled", "info");
-      }
+      if (interval) clearInterval(interval);
     });
   });
 
@@ -220,9 +219,11 @@ const ArchiveViewer = () => {
           </div>
           <PVSelector
             selectedPVs={selectedPVs}
+            visiblePVs={visiblePVs}
             onAddPV={handleAddPV}
             onUpdatePV={handleUpdatePV}
             onRemovePV={handleRemovePV}
+            onVisibilityChange={handlePVVisibilityToggle}
           />
         </div>
 
@@ -272,24 +273,24 @@ const ArchiveViewer = () => {
 
           {/* Chart */}
           <div class="bg-white rounded-lg shadow-md p-4">
+          <div>CHART</div>
             {error() && (
-              <div class="mb-4 p-3 bg-red-100 text-red-700 rounded border border-red-200">
+              <div class="mb-4 p-6 bg-red-100 text-red-700 rounded border border-red-200">
                 <div class="font-semibold">Error</div>
                 <div class="text-sm">{error()}</div>
               </div>
             )}
-
             <div
               ref={chartContainer}
-              class="w-full max-w-screen-xl mx-auto h-[calc(100vh-240px)] relative overflow-hidden"
+              class="w-full mx-auto h-[calc(100vh-240px)] relative overflow-hidden"
             >
               {data().length > 0 ? (
-              <EPICSChart
-                data={data()}
-                pvs={selectedPVs().map(pv => ({ name: pv.name, pen: pv.pen }))}
-                timeRange={timeRange()}
-                timezone={currentOptions().timezone || 'UTC'} // Provide default timezone
-              />
+                <EPICSChart
+                  data={visibleData()}
+                  pvs={selectedPVs().map(pv => ({ name: pv.name, pen: pv.pen }))}
+                  timeRange={timeRange()}
+                  timezone={currentOptions().timezone || 'UTC'}
+                />
               ) : (
                 <div class="absolute inset-0 flex items-center justify-center text-gray-400">
                   No data to display
@@ -320,11 +321,9 @@ const ArchiveViewer = () => {
         <DebugDialog
           isOpen={showDebugData()}
           onClose={() => setShowDebugData(false)}
-          data={data()}
+          data={visibleData()}
         />
       )}
     </div>
   );
-};
-
-export default ArchiveViewer;
+}

@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
-import type { PenProperties } from '../../types';
+import type { PenProperties } from './types';
 
 type PenPropertiesDialogProps = {
   isOpen: boolean;
@@ -43,7 +43,7 @@ export default function PenPropertiesDialog(props: PenPropertiesDialogProps) {
               min="1"
               max="5"
               step="0.5"
-              value={properties().width}
+              value={properties().lineWidth}
               onChange={(e) => setProperties(p => ({ ...p, width: parseFloat(e.target.value) }))}
               class="w-full"
             />
