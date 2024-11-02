@@ -266,22 +266,64 @@ export default function ChartuPlot(props: EPICSChartProps) {
         {
           scale: "x",
           side: 2,
-          grid: { show: true, stroke: "#dedede" },
-          ticks: { show: false },
-          values: (u, vals) => vals.map(timeFormatter),
-          space: 40, // Reduced from 60
+          grid: { 
+            show: true, 
+            stroke: "rgba(0,0,0,0.05)",  // Lighter color
+            width: 1,                     // Thinner lines
+          },
+          space: 40,
           rotate: -20,
-          gap: 5,   // Reduced from 15
-          size: 30  // Added explicit size
+          gap: 5,
+          size: 30,
+          splits: u => {                  // Custom tick spacing for X axis
+            const rangeSecs = (u.data[0][u.data[0].length - 1] - u.data[0][0]) / 1000;
+            let increment;
+            
+            if (rangeSecs <= 60) increment = 5;          // 5 second intervals
+            else if (rangeSecs <= 300) increment = 15;   // 15 second intervals
+            else if (rangeSecs <= 900) increment = 30;   // 30 second intervals
+            else if (rangeSecs <= 3600) increment = 60;  // 1 minute intervals
+            else increment = 300;                        // 5 minute intervals
+
+            const splits = [];
+            let t = Math.ceil(u.data[0][0] / 1000 / increment) * increment;
+            const end = Math.floor(u.data[0][u.data[0].length - 1] / 1000);
+            
+            while (t <= end) {
+              splits.push(t * 1000);
+              t += increment;
+            }
+            
+            return splits;
+          }
         },
         {
           scale: "y",
           side: 3,
-          grid: { show: true, stroke: "#dedede" },
-          ticks: { show: false },
-          values: (u, vals) => vals.map(v => v.toFixed(2)),
-          size: 40,  // Reduced from 60
-          gap: 5     // Added smaller gap
+          grid: { 
+            show: true, 
+            stroke: "rgba(0,0,0,0.05)",  // Lighter color
+            width: 1,                     // Thinner lines
+          },
+          ticks: { 
+            show: true,
+            stroke: "rgba(0,0,0,0.05)",  // Lighter color for ticks
+            width: 1,
+            size: 4,
+          },
+          splits: u => {                  // More Y-axis gridlines
+            const [min, max] = (u.scales.y.range as (u: uPlot, min: number, max: number) => [number, number])(u, 0, 0) || [0, 0];
+            const range = max - min;
+            const step = range / 10;      // 10 divisions
+            const splits = [];
+            for (let i = 0; i <= 10; i++) {
+              splits.push(min + step * i);
+            }
+            return splits;
+          },
+          size: 40,
+          gap: 5,
+          values: (u, vals) => vals.map(v => v.toFixed(2))
         }
       ],
       padding: [10, 8, 30, 8], // [top, right, bottom, left] - significantly reduced
