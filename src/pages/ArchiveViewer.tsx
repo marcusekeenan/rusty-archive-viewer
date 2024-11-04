@@ -1,5 +1,12 @@
 // ArchiveViewer.tsx
-import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import {
+  createSignal,
+  createEffect,
+  createMemo,
+  onCleanup,
+  Show,
+  For,
+} from "solid-js";
 import {
   Dialog,
   DialogContent,
@@ -9,9 +16,10 @@ import {
 import PVSelector from "../components/controls/PVSelector";
 import TimeRangeSelector from "../components/controls/TimeRangeSelector";
 import ChartJS from "../components/chart/ChartJS";
-import ChartuPlot from "../components/chart/ChartuPlot"; // Change this import
+import ChartuPlot from "../components/chart/ChartuPlot";
 import {
   fetchBinnedData,
+  get_data_at_time,
   type ExtendedFetchOptions,
   type NormalizedPVData,
 } from "../utils/archiverApi";
@@ -20,8 +28,9 @@ import type {
   PenProperties,
 } from "../components/controls/types";
 
+import { Dynamic } from "solid-js/web";
+
 // Constants
-const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
 const DEBUG_LOG_LIMIT = 50;
 
 const DISPLAY_MODES = [
@@ -58,6 +67,14 @@ type DebugDialogProps = {
   data: NormalizedPVData[];
 };
 
+type RealTimeMode = {
+  enabled: boolean;
+  updateInterval: number;
+  lastTimestamp: number;
+  bufferSize: number;
+  operator: string;
+};
+
 // Debug Dialog Component
 const DebugDialog = (props: DebugDialogProps) => (
   <Dialog
@@ -82,6 +99,7 @@ const DebugDialog = (props: DebugDialogProps) => (
 export default function ArchiveViewer() {
   let chartContainer: HTMLDivElement | undefined;
 
+  // State Management
   const [selectedPVs, setSelectedPVs] = createSignal<PVWithProperties[]>([]);
   const [visiblePVs, setVisiblePVs] = createSignal<Set<string>>(new Set());
   const [timeRange, setTimeRange] = createSignal<TimeRange>({
@@ -95,27 +113,37 @@ export default function ArchiveViewer() {
   const [error, setError] = createSignal<string | null>(null);
   const [debugLogs, setDebugLogs] = createSignal<DebugLog[]>([]);
   const [showDebugData, setShowDebugData] = createSignal<boolean>(false);
-  const [autoRefresh, setAutoRefresh] = createSignal<boolean>(false);
   const [lastRefresh, setLastRefresh] = createSignal<Date | null>(null);
 
-  type ChartType = "chartjs" | "uplot";
-  const [selectedChart, setSelectedChart] = createSignal<ChartType>("chartjs");
-  // Add this with your other state declarations
+  const [selectedChart, setSelectedChart] = createSignal<"chartjs" | "uplot">(
+    "chartjs"
+  );
   const [processingMode, setProcessingMode] =
-    createSignal<ProcessingMode>("mean");
+    createSignal<ProcessingMode>("raw");
+
+  const [realTimeMode, setRealTimeMode] = createSignal<RealTimeMode>({
+    enabled: false,
+    updateInterval: 1000,
+    lastTimestamp: Date.now(),
+    bufferSize: 3600, // 1 hour of second data
+    operator: "raw",
+  });
+
+  // Computed values
+  const chartKey = createMemo(() => {
+    return `${data().length}-${lastRefresh()?.getTime()}`;
+  });
 
   const totalPoints = () => {
     const allData = visibleData();
     return allData.reduce((sum, pv) => sum + (pv.data?.length || 0), 0);
   };
 
-  // Computed value for visible data
   const visibleData = () => {
     const allData = data();
     const visiblePVNames = visiblePVs();
     return allData.filter((pv) => visiblePVNames.has(pv.meta.name));
   };
-
   // Debug Logging
   const addDebugLog = (
     message: string,
@@ -133,6 +161,34 @@ export default function ArchiveViewer() {
     if (type === "debug") console.debug(message, details);
   };
 
+  // Utility functions
+  const extractBinSize = (operator: string): number => {
+    const match = operator.match(/_(\d+)$/);
+    return match ? parseInt(match[1], 10) : 60; // default 1 minute
+  };
+
+  const mergeBinnedData = (
+    oldData: NormalizedPVData[],
+    newData: NormalizedPVData[],
+    bufferSize: number
+  ): NormalizedPVData[] => {
+    return oldData.map((pvData) => {
+      const newPVData = newData.find((d) => d.meta.name === pvData.meta.name);
+      if (!newPVData) return pvData;
+
+      return {
+        ...pvData,
+        data: [...pvData.data, ...newPVData.data]
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .filter(
+            (item, index, array) =>
+              index === array.findIndex((t) => t.timestamp === item.timestamp)
+          )
+          .slice(-bufferSize),
+      };
+    });
+  };
+
   // Handle PV visibility toggle
   const handlePVVisibilityToggle = (pvName: string, isVisible: boolean) => {
     setVisiblePVs((prev) => {
@@ -145,6 +201,87 @@ export default function ArchiveViewer() {
       return newSet;
     });
     addDebugLog(`Toggled visibility for ${pvName}`, "debug", { isVisible });
+  };
+
+  // Real-time update logic
+  const updateRealTimeData = async () => {
+    if (!realTimeMode().enabled) return;
+  
+    try {
+      const currentTime = new Date();
+      const pvs = selectedPVs();
+      
+      if (processingMode() === 'raw') {
+        // Convert timestamp to seconds since epoch
+        const timestamp = Math.floor(currentTime.getTime() / 1000);
+  
+        addDebugLog('Fetching latest data', 'debug', {
+          timestamp,
+          pvCount: pvs.length,
+          currentTime: currentTime.toISOString()
+        });
+  
+        const latestData = await get_data_at_time(
+          pvs.map(pv => pv.name),
+          timestamp,  // Pass timestamp as seconds, not Date object
+          { 
+            fetch_latest_metadata: true,
+            operator: processingMode()
+          }
+        );
+  
+        // Add more detailed logging
+        addDebugLog('Received latest data', 'debug', {
+          dataPoints: Object.keys(latestData).length,
+          pvs: Object.keys(latestData),
+          firstValue: Object.values(latestData)[0]
+        });
+  
+        setData(prev => {
+          const newData = [...prev];
+          Object.entries(latestData).forEach(([pvName, point]) => {
+            const pvIndex = newData.findIndex(d => d.meta.name === pvName);
+            if (pvIndex >= 0) {
+              const value = typeof point.val === 'number' ? point.val : 
+                           Array.isArray(point.val) ? point.val[0] : 
+                           NaN;
+              
+              if (!isNaN(value)) {
+                newData[pvIndex].data.push({
+                  timestamp: timestamp * 1000, // Convert back to milliseconds for display
+                  severity: point.severity || 0,
+                  status: point.status || 0,
+                  value,
+                  min: value,
+                  max: value,
+                  stddev: 0,
+                  count: 1
+                });
+                // Maintain buffer size
+                if (newData[pvIndex].data.length > realTimeMode().bufferSize) {
+                  newData[pvIndex].data = newData[pvIndex].data.slice(-realTimeMode().bufferSize);
+                }
+              }
+            }
+          });
+          return newData;
+        });
+  
+        setRealTimeMode(prev => ({ ...prev, lastTimestamp: timestamp }));
+        setLastRefresh(currentTime);
+  
+      } else {
+        // Rest of the binned data logic remains the same
+      }
+  
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setError(errorMessage);
+      addDebugLog('Real-time update failed', 'error', { 
+        error: errorMessage,
+        timestamp: new Date().toISOString()
+      });
+    }
   };
 
   // Data Fetching Logic
@@ -163,7 +300,7 @@ export default function ArchiveViewer() {
       const options: ExtendedFetchOptions = {
         ...currentOptions(),
         chart_width: chartContainer?.clientWidth || 1000,
-        operator: processingMode(), // Add this line
+        operator: processingMode(),
       };
 
       const responseData = await fetchBinnedData(
@@ -182,6 +319,18 @@ export default function ArchiveViewer() {
         setData(dataWithProps);
         setError(null);
         setLastRefresh(new Date());
+
+        addDebugLog("Data fetched successfully", "debug", {
+          timestamp: new Date().toISOString(),
+          pointCount: dataWithProps.reduce(
+            (sum, pv) => sum + pv.data.length,
+            0
+          ),
+          timeRange: {
+            start: range.start.toISOString(),
+            end: range.end.toISOString(),
+          },
+        });
       } else {
         throw new Error("No data received");
       }
@@ -235,15 +384,97 @@ export default function ArchiveViewer() {
     handleRefresh();
   };
 
-  // Auto-refresh Effect
+  const handleRealTimeToggle = () => {
+    setRealTimeMode((prev) => {
+      const newMode = {
+        ...prev,
+        enabled: !prev.enabled,
+        lastTimestamp: Date.now(),
+      };
+
+      if (newMode.enabled) {
+        // When enabling real-time, update time range end to now
+        setTimeRange((prev) => ({
+          ...prev,
+          end: new Date(),
+        }));
+      }
+
+      addDebugLog(
+        `Real-time mode ${newMode.enabled ? "enabled" : "disabled"}`,
+        "info",
+        {
+          operator: processingMode(),
+          updateInterval: newMode.updateInterval,
+        }
+      );
+
+      return newMode;
+    });
+  };
+
+  // Effects
   createEffect(() => {
     let interval: number | undefined;
-    if (autoRefresh()) {
-      interval = window.setInterval(handleRefresh, AUTO_REFRESH_INTERVAL);
+
+    if (realTimeMode().enabled) {
+      // Initial update when enabling real-time
+      updateRealTimeData();
+
+      // Set up interval for subsequent updates
+      interval = window.setInterval(() => {
+        updateRealTimeData();
+
+        // Also update the visible time range
+        setTimeRange((prev) => ({
+          ...prev,
+          end: new Date(),
+        }));
+      }, realTimeMode().updateInterval);
+
+      addDebugLog("Real-time updates started", "info", {
+        interval: realTimeMode().updateInterval,
+        operator: processingMode(),
+      });
     }
+
     onCleanup(() => {
-      if (interval) clearInterval(interval);
+      if (interval) {
+        clearInterval(interval);
+        addDebugLog("Real-time updates stopped", "info");
+      }
     });
+  });
+
+  // Effect to automatically adjust update interval based on processing mode
+  createEffect(() => {
+    const mode = processingMode();
+    if (realTimeMode().enabled && mode !== "raw") {
+      const binSize = extractBinSize(mode);
+      setRealTimeMode((prev) => ({
+        ...prev,
+        updateInterval: Math.max(binSize * 1000, 1000), // Minimum 1 second interval
+      }));
+
+      addDebugLog("Adjusted real-time update interval", "debug", {
+        mode,
+        newInterval: Math.max(binSize * 1000, 1000),
+      });
+    }
+  });
+
+  // Effect to handle processing mode changes
+  createEffect(() => {
+    const mode = processingMode();
+    addDebugLog("Processing mode changed", "debug", {
+      mode,
+      realTimeEnabled: realTimeMode().enabled,
+    });
+
+    if (realTimeMode().enabled) {
+      // Force a refresh when changing modes in real-time
+      handleRefresh();
+    }
   });
 
   return (
@@ -272,8 +503,9 @@ export default function ArchiveViewer() {
           {/* Control Buttons */}
           <div class="bg-white rounded-lg shadow-md p-4">
             <div class="flex flex-col gap-4">
-              {/* Processing Mode Selector */}
+              {/* Processing Mode and Controls Row */}
               <div class="flex gap-4 items-center">
+                {/* Processing Mode Selector */}
                 <div class="w-64">
                   <label class="block mb-2 text-sm font-medium text-gray-700">
                     Display Mode
@@ -297,31 +529,43 @@ export default function ArchiveViewer() {
                   </select>
                 </div>
 
+                {/* Control Buttons */}
                 <div class="flex gap-2 items-center ml-auto">
+                  {/* Real-time Toggle Button */}
                   <button
-                    onClick={() => setAutoRefresh(!autoRefresh())}
+                    onClick={handleRealTimeToggle}
+                    disabled={loading()}
                     class={`px-4 py-1.5 rounded text-white transition-colors ${
-                      autoRefresh()
+                      realTimeMode().enabled
                         ? "bg-red-500 hover:bg-red-600"
                         : "bg-green-500 hover:bg-green-600"
-                    }`}
-                    disabled={loading()}
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
-                    {autoRefresh() ? "Stop Auto-refresh" : "Start Auto-refresh"}
+                    <div class="flex items-center gap-2">
+                      {realTimeMode().enabled ? (
+                        <>
+                          <div class="w-2 h-2 rounded-full bg-white animate-pulse" />
+                          <span>Live</span>
+                        </>
+                      ) : (
+                        <span>Go Live</span>
+                      )}
+                    </div>
                   </button>
 
+                  {/* Manual Refresh Button */}
                   <button
                     onClick={handleRefresh}
-                    disabled={loading()}
-                    title={`Total points: ${totalPoints().toLocaleString()}`} // Add tooltip
+                    disabled={loading() || realTimeMode().enabled}
+                    title={`Total points: ${totalPoints().toLocaleString()}`}
                     class="px-4 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 
-         disabled:opacity-50 disabled:cursor-not-allowed 
-         transition-colors flex items-center justify-center gap-2"
+                           disabled:opacity-50 disabled:cursor-not-allowed 
+                           transition-colors flex items-center justify-center gap-2"
                   >
                     {loading() ? (
                       <>
                         <div class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
-                        Fetching...
+                        <span>Fetching...</span>
                       </>
                     ) : (
                       <div class="flex items-center gap-2">
@@ -342,6 +586,13 @@ export default function ArchiveViewer() {
                   </button>
                 </div>
               </div>
+
+              {/* Last Update Indicator */}
+              {lastRefresh() && (
+                <div class="text-xs text-gray-500">
+                  Last updated: {lastRefresh()?.toLocaleTimeString()}
+                </div>
+              )}
             </div>
           </div>
 
@@ -388,7 +639,8 @@ export default function ArchiveViewer() {
                 <Show
                   when={selectedChart() === "chartjs"}
                   fallback={
-                    <ChartuPlot
+                    <Dynamic
+                      component={ChartuPlot}
                       data={visibleData()}
                       pvs={selectedPVs().map((pv) => ({
                         name: pv.name,
@@ -399,7 +651,8 @@ export default function ArchiveViewer() {
                     />
                   }
                 >
-                  <ChartJS
+                  <Dynamic
+                    component={ChartJS}
                     data={visibleData()}
                     pvs={selectedPVs().map((pv) => ({
                       name: pv.name,
@@ -430,7 +683,7 @@ export default function ArchiveViewer() {
           </div>
           <TimeRangeSelector
             onChange={handleTimeRangeChange}
-            disabled={loading()}
+            disabled={loading() || realTimeMode().enabled}
           />
         </div>
       </div>

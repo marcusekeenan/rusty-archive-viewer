@@ -132,23 +132,23 @@ export async function getPVMetadata(pv: string): Promise<Meta> {
 /**
  * Gets data at a specific point in time for multiple PVs
  */
-export async function getDataAtTime(
-    pvs: string[],
-    timestamp: Date,
-    options?: ExtendedFetchOptions
+export async function get_data_at_time(
+  pvs: string[],
+  timestamp: number,  // Changed from Date to number (seconds since epoch)
+  options?: ExtendedFetchOptions
 ): Promise<Record<string, PointValue>> {
-    const params = {
-        pvs,
-        timestamp: Math.floor(timestamp.getTime() / 1000),
-        options,
-    };
+  const params = {
+      pvs,
+      timestamp,  // Already in seconds
+      options,
+  };
 
-    try {
-        return await invoke<Record<string, PointValue>>("get_data_at_time", params);
-    } catch (error) {
-        console.error("Error getting data at time:", error);
-        throw error;
-    }
+  try {
+      return await invoke<Record<string, PointValue>>("get_data_at_time", params);
+  } catch (error) {
+      console.error("Error getting data at time:", error);
+      throw error;
+  }
 }
 
 /**

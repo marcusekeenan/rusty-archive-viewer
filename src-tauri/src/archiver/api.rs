@@ -175,7 +175,7 @@ impl ArchiverClient {
             params.push(("retiredPVTemplate", template.as_str()));
         }
     
-        let url = self.build_url("getDataAtTime", &params)?;
+        let url = self.build_url("get_data_at_time", &params)?;
     
         let response = self
             .client

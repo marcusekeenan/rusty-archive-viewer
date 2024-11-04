@@ -9,6 +9,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             fetch_binned_data,
             get_pv_metadata,
+            get_data_at_time,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
