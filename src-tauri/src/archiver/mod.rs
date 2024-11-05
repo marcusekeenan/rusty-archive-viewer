@@ -9,7 +9,6 @@ pub mod cache;
 pub mod error;
 pub mod health;
 pub mod metrics;
-pub mod session;
 pub mod validation;
 
 #[cfg(test)]
@@ -28,12 +27,12 @@ pub use self::{
         get_data_at_time,
         get_pv_metadata,
         get_pv_status,
+        get_health_status,  // Add this line
         test_connection,
     },
     error::{ArchiverError, Result},
     health::{HealthMonitor, HealthStatus, SystemStatus},
     metrics::{ApiMetrics, MetricsSnapshot},
-    session::{Session, SessionManager, UserPreferences},
     validation::{Validator, RequestValidator},
 };
 
@@ -65,14 +64,6 @@ pub fn init_health_monitor() -> HealthMonitor {
     )
 }
 
-/// Initialize session management
-pub fn init_session_manager() -> SessionManager {
-    SessionManager::new(
-        1000,                          // max sessions
-        chrono::Duration::hours(24),   // session timeout
-    )
-}
-
 #[cfg(test)]
 mod integration_tests {
     use super::*;
@@ -89,7 +80,6 @@ mod integration_tests {
         let client = super::init_client().await.unwrap();
         let metrics = super::init_metrics();
         let health = super::init_health_monitor();
-        let sessions = super::init_session_manager();
 
         // Test basic connectivity
         let connection_test = super::test_connection().await;

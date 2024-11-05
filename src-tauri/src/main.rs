@@ -7,9 +7,21 @@ fn main() {
     let context = tauri::generate_context!();
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            // Core data fetching
             fetch_binned_data,
-            get_pv_metadata,
+            fetch_data_with_operator,
+            fetch_optimized_data,
+            fetch_raw_data,
             get_data_at_time,
+            
+            // Metadata and status
+            get_pv_metadata,
+            get_pv_status,
+            get_health_status,
+            
+            // Testing and utilities
+            test_connection,
+            // export_data,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
@@ -18,6 +30,18 @@ fn main() {
                     window.open_devtools();
                 }
             }
+        
+            // Example of initializing HealthMonitor here if needed
+            tauri::async_runtime::spawn(async {
+                if let Ok(monitor) = get_health_monitor().await {
+                    if let Err(e) = monitor.start().await {
+                        eprintln!("Failed to start HealthMonitor: {}", e);
+                    }
+                } else {
+                    eprintln!("Failed to initialize HealthMonitor");
+                }
+            });
+        
             Ok(())
         })
         .menu(if cfg!(target_os = "macos") {

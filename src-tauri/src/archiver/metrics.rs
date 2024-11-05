@@ -67,6 +67,20 @@ impl ApiMetrics {
         }
     }
 
+    pub fn reset_errors(&self) {
+        self.failed_requests.store(0, Ordering::Relaxed);
+        *self.last_error.write() = None;
+        *self.last_error_time.write() = None;
+    }
+
+    pub fn update_memory_usage(&self, usage: u64) {
+        self.memory_usage.store(usage, Ordering::Relaxed);
+        let peak = self.peak_memory_usage.load(Ordering::Relaxed);
+        if usage > peak {
+            self.peak_memory_usage.store(usage, Ordering::Relaxed);
+        }
+    }
+
     pub fn record_request(&self) {
         self.requests_total.fetch_add(1, Ordering::Relaxed);
     }
