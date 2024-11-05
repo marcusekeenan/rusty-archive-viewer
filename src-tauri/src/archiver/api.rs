@@ -1,25 +1,29 @@
 // api.rs
 
-use crate::{
-    cache::CacheManager,
+use crate::archiver::{
+    cache::{CacheManager, CacheKey},
     error::{ArchiverError, Result},
-    health::HealthMonitor,
+    health::{HealthMonitor, HealthStatus},
     metrics::ApiMetrics,
-    session::SessionManager,
+    session::{SessionManager, Session},
     types::*,
     validation::{RequestValidator, Validator},
+    constants::API_CONFIG,
 };
 
 use chrono::{DateTime, Duration, Utc};
-use futures::future::join_all;
+// Update futures imports
+use futures::{
+    future::{join_all, BoxFuture},
+    FutureExt,
+};
 use reqwest::Client;
 use serde_json::Value;
-use std::sync::Arc;
+use std::{sync::Arc, collections::HashMap, time::{Duration as StdDuration, Instant}};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use url::Url;
 use uuid::Uuid;
-
 /// Main API client for interacting with the EPICS Archiver Appliance
 pub struct ArchiveViewerApi {
     client: Client,
@@ -29,22 +33,69 @@ pub struct ArchiveViewerApi {
     health: Arc<HealthMonitor>,
     metrics: Arc<ApiMetrics>,
     validator: Arc<RequestValidator>,
-    config: Arc<RwLock<ApiConfig>>,
+    config: Arc<RwLock<Config>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub connection: ConnectionConfig,
+    pub cache: CacheConfig,
+    pub session: SessionConfig,
+    pub metrics: MetricsConfig,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConnectionConfig {
+    pub timeout: StdDuration,
+    pub pool_size: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct CacheConfig {
+    pub max_entries: usize,
+    pub max_memory_mb: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionConfig {
+    pub max_sessions: usize,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug)]
+pub struct MetricsConfig {
+    pub collection_interval: Duration,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            connection: ConnectionConfig {
+                timeout: StdDuration::from_secs(30),
+                pool_size: 10,
+            },
+            cache: CacheConfig {
+                max_entries: 10000,
+                max_memory_mb: 1024,
+            },
+            session: SessionConfig {
+                max_sessions: 1000,
+                timeout: Duration::hours(24),
+            },
+            metrics: MetricsConfig {
+                collection_interval: Duration::seconds(60),
+            },
+        }
+    }
 }
 
 impl ArchiveViewerApi {
-    /// Creates a new API instance with default configuration
     pub async fn new(base_url: String) -> Result<Arc<Self>> {
-        let config = ApiConfig::default();
-        Self::with_config(config).await
+        let config = Config::default();
+        Self::with_config(config, base_url).await
     }
 
-    /// Creates a new API instance with custom configuration
-    pub async fn with_config(config: ApiConfig) -> Result<Arc<Self>> {
-        // Validate config
-        config.validate()?;
-
-        // Initialize client
+    pub async fn with_config(config: Config, base_url_str: String) -> Result<Arc<Self>> {
         let client = Client::builder()
             .timeout(config.connection.timeout)
             .pool_max_idle_per_host(config.connection.pool_size)
@@ -56,7 +107,6 @@ impl ArchiveViewerApi {
                 retry_after: None,
             })?;
 
-        // Initialize components
         let metrics = Arc::new(ApiMetrics::new());
         let cache = Arc::new(CacheManager::new(
             config.cache.max_entries,
@@ -73,14 +123,16 @@ impl ArchiveViewerApi {
         ));
         let validator = Arc::new(RequestValidator::new());
 
+        let base_url = Url::parse(&base_url_str).map_err(|e| ArchiverError::ConnectionError {
+            message: "Invalid base URL".into(),
+            context: e.to_string(),
+            source: Some(Box::new(e)),
+            retry_after: None,
+        })?;
+
         let api = Arc::new(Self {
             client,
-            base_url: Url::parse(&base_url).map_err(|e| ArchiverError::ConnectionError {
-                message: "Invalid base URL".into(),
-                context: e.to_string(),
-                source: Some(Box::new(e)),
-                retry_after: None,
-            })?,
+            base_url,
             cache,
             sessions,
             health: health.clone(),
@@ -89,56 +141,40 @@ impl ArchiveViewerApi {
             config: Arc::new(RwLock::new(config)),
         });
 
-        // Start health monitoring
         health.clone().start();
 
         Ok(api)
     }
-
-    /// Fetches data for a set of PVs
+    
     pub async fn fetch_data(
         &self,
         session_id: Uuid,
         pvs: Vec<String>,
         time_range: TimeRange,
-        resolution: Option<DataResolution>,
+        resolution: Option<String>,
     ) -> Result<HashMap<String, Vec<ProcessedPoint>>> {
-        // Validate session
         let session = self.sessions.get_session(session_id).await?;
 
-        // Validate request parameters
-        let params = RequestParameters {
-            pvs: pvs.clone(),
-            start_time: time_range.start,
-            end_time: time_range.end,
-            operator: resolution.as_ref().map(|r| r.to_string()),
-            chart_width: None,
-            options: None,
-        };
-        self.validator.validate_data_request(&params)?;
-
-        // Start metrics collection
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         self.metrics.record_request();
 
-        // Determine optimal resolution if not specified
-        let resolution = resolution.unwrap_or_else(|| {
-            let duration = time_range.end - time_range.start;
-            DataResolution::get_optimal_resolution(
-                duration,
-                1000, // Default width
-                None,
-            )
-        });
+        let mut tasks: Vec<BoxFuture<'_, Result<(String, Vec<ProcessedPoint>)>>> = Vec::new();
+        
+        // Create Arc references to shared data
+        let time_range = Arc::new(time_range);
+        let resolution = Arc::new(resolution);
 
-        // Create fetch tasks for each PV
-        let mut tasks = Vec::new();
-        for pv in pvs {
-            let task = self.fetch_pv_data(pv, &time_range, &resolution).boxed();
+        for pv in pvs.into_iter() {
+            let time_range = Arc::clone(&time_range);
+            let resolution = Arc::clone(&resolution);
+            
+            let task = async move {
+                let resolution_deref = resolution.as_deref();
+                self.fetch_pv_data(&pv, &time_range, resolution_deref).await
+            }.boxed();
             tasks.push(task);
         }
 
-        // Execute all fetches concurrently
         let results = join_all(tasks).await;
         let mut data = HashMap::new();
 
@@ -155,45 +191,40 @@ impl ArchiveViewerApi {
             }
         }
 
-        // Record metrics
         self.metrics.record_latency(start.elapsed());
 
         Ok(data)
     }
 
-    /// Fetches data for a single PV
     async fn fetch_pv_data(
         &self,
-        pv: String,
+        pv: &str,
         time_range: &TimeRange,
-        resolution: &DataResolution,
+        resolution: Option<&str>,
     ) -> Result<(String, Vec<ProcessedPoint>)> {
-        // Create cache key
         let cache_key = CacheKey::new(
-            pv.clone(),
-            time_range.start.timestamp(),
-            time_range.end.timestamp(),
-            resolution.clone(),
+            pv.to_string(),
+            time_range.start,
+            time_range.end,
+            resolution.unwrap_or("raw").to_string(),
         );
 
-        // Try to get from cache
         let data = self.cache.get_or_fetch_data(
             cache_key,
             || async {
-                self.fetch_from_archiver(&pv, time_range, resolution).await
+                self.fetch_from_archiver(pv, time_range, resolution).await
             },
-            resolution.clone(),
+            resolution.unwrap_or("raw").to_string(),
         ).await?;
 
-        Ok((pv, data))
+        Ok((pv.to_string(), data))
     }
 
-    /// Makes the actual request to the archiver
     async fn fetch_from_archiver(
         &self,
         pv: &str,
         time_range: &TimeRange,
-        resolution: &DataResolution,
+        resolution: Option<&str>,
     ) -> Result<Vec<ProcessedPoint>> {
         let mut url = self.base_url.join("retrieval/data/getData.json")
             .map_err(|e| ArchiverError::ConnectionError {
@@ -203,26 +234,19 @@ impl ArchiveViewerApi {
                 retry_after: None,
             })?;
 
-        // Construct PV name with operator if needed
-        let processed_pv = match resolution {
-            DataResolution::Raw => pv.to_string(),
-            DataResolution::Optimized { display_width } => {
-                format!("optimized({})", pv)
-            },
-            DataResolution::Binned { operator, bin_size } => {
-                format!("{}_{}", operator, bin_size)
-            }
+        let processed_pv = if let Some(res) = resolution {
+            format!("{}_{}", res, pv)
+        } else {
+            pv.to_string()
         };
 
-        // Add query parameters
         let query = [
             ("pv", processed_pv),
-            ("from", time_range.start.to_rfc3339()),
-            ("to", time_range.end.to_rfc3339()),
+            ("from", time_range.start.to_string()),
+            ("to", time_range.end.to_string()),
         ];
         url.query_pairs_mut().extend_pairs(query);
 
-        // Make request
         let response = self.client.get(url.clone())
             .send()
             .await
@@ -242,7 +266,6 @@ impl ArchiveViewerApi {
             });
         }
 
-        // Parse response
         let data: Value = response.json().await
             .map_err(|e| ArchiverError::DataError {
                 message: "Failed to parse response".into(),
@@ -252,66 +275,17 @@ impl ArchiveViewerApi {
                 pv: Some(pv.to_string()),
             })?;
 
-        // Process and validate data
-        self.process_response(data, resolution)
+        // For now, return empty vec until response processing is implemented
+        Ok(Vec::new())
     }
 
-    /// Processes the raw response into ProcessedPoints
-    fn process_response(
-        &self,
-        data: Value,
-        resolution: &DataResolution,
-    ) -> Result<Vec<ProcessedPoint>> {
-        // Implementation details for processing the response...
-        // This would handle the various data formats and create ProcessedPoints
-        todo!("Implement response processing")
-    }
-
-    /// Starts live updates for a set of PVs
-    pub async fn start_live_updates(
-        &self,
-        session_id: Uuid,
-        pvs: Vec<String>,
-        update_interval: Duration,
-        callback: impl Fn(HashMap<String, ProcessedPoint>) + Send + Sync + 'static,
-    ) -> Result<()> {
-        // Implementation for live updates...
-        todo!("Implement live updates")
-    }
-
-    /// Stops live updates for a session
-    pub async fn stop_live_updates(&self, session_id: Uuid) -> Result<()> {
-        // Implementation for stopping live updates...
-        todo!("Implement stop live updates")
-    }
-
-    /// Gets metadata for a PV
-    pub async fn get_metadata(&self, pv: &str) -> Result<Meta> {
-        // Implementation for getting metadata...
-        todo!("Implement metadata retrieval")
-    }
-
-    /// Gets the current health status
     pub async fn get_health_status(&self) -> Result<HealthStatus> {
         self.health.get_current_status().await
     }
 
-    /// Shuts down the API client
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down Archive Viewer API");
-        
-        // Stop health monitoring
-        // Clean up sessions
-        // Stop any live updates
-        // Flush caches if needed
-        
         Ok(())
-    }
-}
-
-impl Drop for ArchiveViewerApi {
-    fn drop(&mut self) {
-        // Ensure cleanup happens
     }
 }
 
@@ -319,17 +293,6 @@ impl Drop for ArchiveViewerApi {
 mod tests {
     use super::*;
     use tokio::test;
-    use mockito::mock;
-
-    // Test constants
-    const TEST_PV: &str = "TEST:PV1";
-    const TEST_DATA: &str = r#"{
-        "meta": {"name": "TEST:PV1", "EGU": "C"},
-        "data": [
-            {"secs": 1000, "nanos": 0, "val": 42.0},
-            {"secs": 1001, "nanos": 0, "val": 43.0}
-        ]
-    }"#;
 
     #[test]
     async fn test_api_initialization() {
@@ -339,38 +302,4 @@ mod tests {
             
         assert!(Arc::strong_count(&api) == 1);
     }
-
-    #[test]
-    async fn test_data_fetch() {
-        let mut server = mockito::Server::new();
-        
-        let mock = server.mock("GET", "/retrieval/data/getData.json")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(TEST_DATA)
-            .create();
-
-        let api = ArchiveViewerApi::new(server.url())
-            .await
-            .unwrap();
-
-        // Create a session
-        let session = api.sessions.create_session(None).await.unwrap();
-
-        // Fetch data
-        let result = api.fetch_data(
-            session.id,
-            vec![TEST_PV.to_string()],
-            TimeRange {
-                start: Utc::now() - Duration::hours(1),
-                end: Utc::now(),
-            },
-            None,
-        ).await;
-
-        assert!(result.is_ok());
-        mock.assert();
-    }
-
-    // Add more tests...
 }

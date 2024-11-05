@@ -1,6 +1,6 @@
 // session.rs
 
-use crate::{
+use crate::archiver::{
     error::{ArchiverError, Result},
     metrics::ApiMetrics,
     types::*,
@@ -28,6 +28,7 @@ pub struct Session {
 pub struct UserPreferences {
     pub timezone: String,
     pub default_chart_settings: ChartPreferences,
+    #[serde(with = "duration_serde")]
     pub refresh_interval: Duration,
     pub max_points_per_chart: usize,
     pub auto_reconnect: bool,
@@ -35,12 +36,20 @@ pub struct UserPreferences {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChartPreferences {
+    #[serde(with = "duration_serde")]
     pub default_time_range: Duration,
     pub show_grid: bool,
     pub show_legend: bool,
     pub auto_scale: bool,
     pub default_operator: String,
     pub line_style: LineStyle,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LineStyle {
+    Solid,
+    Dashed,
+    Dotted,
 }
 
 #[derive(Debug)]
@@ -50,6 +59,26 @@ pub struct SessionManager {
     max_sessions: usize,
     metrics: Arc<ApiMetrics>,
     cleanup_interval: Duration,
+}
+
+mod duration_serde {
+    use chrono::Duration;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        duration.num_seconds().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let seconds = i64::deserialize(deserializer)?;
+        Ok(Duration::seconds(seconds))
+    }
 }
 
 impl Default for UserPreferences {
@@ -96,10 +125,11 @@ impl SessionManager {
             self.cleanup_expired_sessions().await?;
             
             if self.sessions.len() >= self.max_sessions {
-                return Err(ArchiverError::SessionError {
+                return Err(ArchiverError::ServerError {
                     message: "Maximum number of sessions reached".into(),
-                    context: format!("max_sessions: {}", self.max_sessions),
-                    source: None,
+                    status: 503,
+                    body: None,
+                    retry_after: Some(std::time::Duration::from_secs(60)),
                 });
             }
         }
@@ -113,78 +143,69 @@ impl SessionManager {
         };
 
         self.sessions.insert(session.id, session.clone());
-        self.metrics.record_session_created();
-        
-        debug!("Created new session: {}", session.id);
         Ok(session)
     }
 
     pub async fn get_session(&self, id: Uuid) -> Result<Session> {
-        let mut session = self.sessions.get_mut(&id)
-            .ok_or_else(|| ArchiverError::SessionError {
+        let mut entry = self.sessions.get_mut(&id)
+            .ok_or_else(|| ArchiverError::ServerError {
                 message: "Session not found".into(),
-                context: format!("session_id: {}", id),
-                source: None,
+                status: 404,
+                body: None,
+                retry_after: None,
             })?;
 
-        if self.is_session_expired(&session) {
+        if self.is_session_expired(&entry) {
             self.sessions.remove(&id);
-            return Err(ArchiverError::SessionError {
+            return Err(ArchiverError::ServerError {
                 message: "Session expired".into(),
-                context: format!("session_id: {}", id),
-                source: None,
+                status: 401,
+                body: None,
+                retry_after: None,
             });
         }
 
-        session.last_active = Utc::now();
-        Ok(session.clone())
+        entry.last_active = Utc::now();
+        Ok(entry.clone())
     }
 
     pub async fn update_session(&self, id: Uuid, preferences: UserPreferences) -> Result<Session> {
-        let mut session = self.sessions.get_mut(&id)
-            .ok_or_else(|| ArchiverError::SessionError {
+        let mut entry = self.sessions.get_mut(&id)
+            .ok_or_else(|| ArchiverError::ServerError {
                 message: "Session not found".into(),
-                context: format!("session_id: {}", id),
-                source: None,
+                status: 404,
+                body: None,
+                retry_after: None,
             })?;
 
-        session.user_preferences = preferences;
-        session.last_active = Utc::now();
-        
-        Ok(session.clone())
+        entry.user_preferences = preferences;
+        entry.last_active = Utc::now();
+        Ok(entry.clone())
     }
 
-    pub async fn add_chart_to_session(&self, session_id: Uuid, chart_id: Uuid) -> Result<()> {
-        let mut session = self.sessions.get_mut(&session_id)
-            .ok_or_else(|| ArchiverError::SessionError {
-                message: "Session not found".into(),
-                context: format!("session_id: {}", session_id),
-                source: None,
-            })?;
+    pub async fn cleanup_expired_sessions(&self) -> Result<()> {
+        let expired: Vec<_> = self.sessions.iter()
+            .filter(|ref_multi| self.is_session_expired(ref_multi))
+            .map(|ref_multi| ref_multi.id)
+            .collect();
 
-        session.charts.insert(chart_id);
-        session.last_active = Utc::now();
+        for id in expired {
+            self.sessions.remove(&id);
+            debug!("Cleaned up expired session: {}", id);
+        }
+
         Ok(())
     }
 
-    pub async fn remove_chart_from_session(&self, session_id: Uuid, chart_id: Uuid) -> Result<()> {
-        let mut session = self.sessions.get_mut(&session_id)
-            .ok_or_else(|| ArchiverError::SessionError {
-                message: "Session not found".into(),
-                context: format!("session_id: {}", session_id),
-                source: None,
-            })?;
-
-        session.charts.remove(&chart_id);
-        session.last_active = Utc::now();
-        Ok(())
+    fn is_session_expired(&self, session: &Session) -> bool {
+        Utc::now() - session.last_active > self.timeout
     }
 
     fn start_cleanup_task(&self) {
         let sessions = self.sessions.clone();
-        let metrics = self.metrics.clone();
         let timeout = self.timeout;
         let interval = self.cleanup_interval;
+        let metrics = self.metrics.clone();
 
         tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(
@@ -193,7 +214,6 @@ impl SessionManager {
 
             loop {
                 interval_timer.tick().await;
-                
                 let expired: Vec<_> = sessions.iter()
                     .filter(|session| {
                         Utc::now() - session.last_active > timeout
@@ -211,66 +231,28 @@ impl SessionManager {
         });
     }
 
-    async fn cleanup_expired_sessions(&self) -> Result<()> {
-        let expired: Vec<_> = self.sessions.iter()
-            .filter(|session| self.is_session_expired(&session))
-            .map(|session| session.id)
-            .collect();
-
-        for id in expired {
-            if self.sessions.remove(&id).is_some() {
-                self.metrics.record_session_expired();
-                debug!("Cleaned up expired session: {}", id);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn is_session_expired(&self, session: &Session) -> bool {
-        Utc::now() - session.last_active > self.timeout
-    }
-
     pub fn get_active_session_count(&self) -> usize {
         self.sessions.len()
     }
 
-    pub async fn get_session_metrics(&self) -> SessionMetrics {
-        SessionMetrics {
-            active_sessions: self.sessions.len(),
-            expired_sessions: self.metrics.get_expired_session_count(),
-            avg_session_duration: self.calculate_avg_session_duration(),
-        }
+    pub async fn destroy_session(&self, id: Uuid) -> Result<()> {
+        self.sessions.remove(&id)
+            .ok_or_else(|| ArchiverError::ServerError {
+                message: "Session not found".into(),
+                status: 404,
+                body: None,
+                retry_after: None,
+            })?;
+        Ok(())
     }
-
-    fn calculate_avg_session_duration(&self) -> Duration {
-        let total_duration: i64 = self.sessions.iter()
-            .map(|session| {
-                (session.last_active - session.created_at).num_seconds()
-            })
-            .sum();
-
-        if self.sessions.is_empty() {
-            Duration::seconds(0)
-        } else {
-            Duration::seconds(total_duration / self.sessions.len() as i64)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionMetrics {
-    pub active_sessions: usize,
-    pub expired_sessions: u64,
-    pub avg_session_duration: Duration,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::test;
+    use std::time::Duration as StdDuration;
 
-    #[test]
+    #[tokio::test]
     async fn test_session_lifecycle() {
         let manager = SessionManager::new(
             10,
@@ -292,25 +274,17 @@ mod tests {
         };
         let updated = manager.update_session(session.id, new_prefs.clone()).await.unwrap();
         assert_eq!(updated.user_preferences.timezone, "America/Los_Angeles");
-
-        // Add chart
-        let chart_id = Uuid::new_v4();
-        manager.add_chart_to_session(session.id, chart_id).await.unwrap();
-        let session = manager.get_session(session.id).await.unwrap();
-        assert!(session.charts.contains(&chart_id));
     }
 
-    #[test]
+    #[tokio::test]
     async fn test_session_expiration() {
         let manager = SessionManager::new(
             10,
-            Duration::seconds(1) // Short timeout for testing
+            Duration::seconds(1)
         );
 
         let session = manager.create_session(None).await.unwrap();
-        
-        // Wait for expiration
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(StdDuration::from_secs(2)).await;
         
         let result = manager.get_session(session.id).await;
         assert!(result.is_err());

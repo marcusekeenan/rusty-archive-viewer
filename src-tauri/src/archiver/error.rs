@@ -55,6 +55,13 @@ pub enum ArchiverError {
         retry_after: Option<Duration>,
     },
 
+    #[error("Health check error: {message} (context: {context})")]
+    HealthCheckError {
+        message: String,
+        context: String,
+        source: Option<Box<dyn StdError + Send + Sync>>,
+    },
+
     #[error(transparent)]
     IoError(#[from] std::io::Error),
 
@@ -82,6 +89,7 @@ impl ArchiverError {
             Self::ReqwestError(e) => e.is_timeout() || e.is_connect(),
             Self::JsonError(_) => false,
             Self::ChronoError(_) => false,
+            Self::HealthCheckError { .. } => true,
         }
     }
 
@@ -168,6 +176,7 @@ impl ArchiverError {
         }
     }
 }
+
 
 /// Result type alias for ArchiverError
 pub type Result<T> = std::result::Result<T, ArchiverError>;

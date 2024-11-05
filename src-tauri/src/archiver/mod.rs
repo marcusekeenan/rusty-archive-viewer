@@ -15,9 +15,11 @@ pub mod validation;
 #[cfg(test)]
 mod tests;
 
+use std::sync::Arc;  // Added Arc import
+
 // Re-export core types and functions
 pub use self::{
-    api::ArchiverClient,
+    api::ArchiveViewerApi as ArchiverClient,
     commands::{
         fetch_binned_data,
         fetch_data_with_operator,
@@ -30,7 +32,7 @@ pub use self::{
     },
     error::{ArchiverError, Result},
     health::{HealthMonitor, HealthStatus, SystemStatus},
-    metrics::{ApiMetrics, MetricsSummary},
+    metrics::{ApiMetrics, MetricsSnapshot},
     session::{Session, SessionManager, UserPreferences},
     validation::{Validator, RequestValidator},
 };
@@ -40,26 +42,32 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const API_VERSION: &str = "1.0.0";
 
 /// Initialize a new archiver client with default configuration
-pub fn init_client() -> Result<ArchiverClient> {
-    ArchiverClient::new()
+// archiver/mod.rs
+
+// ... imports and modules remain the same ...
+
+/// Initialize a new archiver client with default configuration
+pub async fn init_client() -> Result<ArchiverClient> {
+    // Add your implementation here
+    unimplemented!()
 }
 
 /// Initialize metrics collection
-pub fn init_metrics() -> metrics::ApiMetrics {
-    metrics::ApiMetrics::new()
+pub fn init_metrics() -> ApiMetrics {
+    ApiMetrics::new()
 }
 
 /// Initialize health monitoring
-pub fn init_health_monitor() -> health::HealthMonitor {
-    health::HealthMonitor::new(
+pub fn init_health_monitor() -> HealthMonitor {
+    HealthMonitor::new(
         chrono::Duration::seconds(10), // check interval
         1000,                         // max history entries
     )
 }
 
 /// Initialize session management
-pub fn init_session_manager() -> session::SessionManager {
-    session::SessionManager::new(
+pub fn init_session_manager() -> SessionManager {
+    SessionManager::new(
         1000,                          // max sessions
         chrono::Duration::hours(24),   // session timeout
     )
@@ -70,27 +78,24 @@ mod integration_tests {
     use super::*;
     use tokio::test;
 
-    #[test]
+    #[tokio::test]
     async fn test_client_initialization() {
-        let client = init_client();
+        let client = super::init_client().await;
         assert!(client.is_ok());
     }
 
-    #[test]
+    #[tokio::test]
     async fn test_full_system() {
-        let client = init_client().unwrap();
-        let metrics = init_metrics();
-        let health = init_health_monitor();
-        let sessions = init_session_manager();
+        let client = super::init_client().await.unwrap();
+        let metrics = super::init_metrics();
+        let health = super::init_health_monitor();
+        let sessions = super::init_session_manager();
 
         // Test basic connectivity
-        let connection_test = test_connection().await;
+        let connection_test = super::test_connection().await;
         assert!(connection_test.is_ok());
-
-        // More integration tests can be added here...
     }
 }
-
 // Internal utilities and helpers
 #[doc(hidden)]
 pub(crate) mod utils {

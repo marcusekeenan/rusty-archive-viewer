@@ -1,6 +1,6 @@
 // health.rs
 
-use crate::{
+use crate::archiver::{
     error::{ArchiverError, Result},
     metrics::ApiMetrics,
 };
@@ -29,6 +29,7 @@ pub enum SystemStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatus {
     pub status: SystemStatus,
+    #[serde(with = "duration_serde")]
     pub uptime: Duration,
     pub last_check: DateTime<Utc>,
     pub memory_metrics: MemoryMetrics,
@@ -36,6 +37,37 @@ pub struct HealthStatus {
     pub cache_metrics: CacheMetrics,
     pub performance_metrics: PerformanceMetrics,
 }
+fn deserialize_duration<'de, D>(deserializer: D) -> std::result::Result<Duration, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let seconds = i64::deserialize(deserializer)
+        .map_err(|e| D::Error::custom(format!("Failed to deserialize duration: {}", e)))?;
+    Ok(Duration::seconds(seconds))
+}
+
+mod duration_serde {
+    use super::*;
+    
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_i64(duration.num_seconds())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Duration, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let seconds = i64::deserialize(deserializer)
+            .map_err(|e| D::Error::custom(format!("Failed to deserialize duration: {}", e)))?;
+        Ok(Duration::seconds(seconds))
+    }
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryMetrics {
@@ -267,26 +299,26 @@ mod tests {
     }
 
     #[test]
-    async fn test_health_monitor_thresholds() {
-        let thresholds = HealthThresholds {
-            max_error_rate: 0.01, // 1%
-            max_response_time: 100.0, // 100ms
-            max_memory_usage: 1024 * 1024, // 1MB
-            degraded_cache_hit_rate: 0.8, // 80%
-        };
+async fn test_health_monitor_thresholds() {
+    let thresholds = HealthThresholds {
+        max_error_rate: 0.01, // 1%
+        max_response_time: 100.0, // 100ms
+        max_memory_usage: 1024 * 1024, // 1MB
+        degraded_cache_hit_rate: 0.8, // 80%
+    };
 
-        let monitor = Arc::new(HealthMonitor::with_thresholds(
-            Duration::seconds(1),
-            10,
-            thresholds
-        ));
+    let monitor = Arc::new(HealthMonitor::with_thresholds(
+        Duration::seconds(1),
+        10,
+        thresholds
+    ));
 
-        // Simulate high error rate
-        monitor.metrics.record_error();
-        monitor.metrics.record_error();
-        monitor.metrics.record_request(); // 66% error rate
+    // Simulate high error rate
+    monitor.metrics.record_error(Some("Test error 1".to_string()));
+    monitor.metrics.record_error(Some("Test error 2".to_string()));
+    monitor.metrics.record_request(); // 66% error rate
 
-        let status = monitor.collect_health_status().await.unwrap();
-        assert!(matches!(status.status, SystemStatus::Unhealthy { .. }));
-    }
+    let status = monitor.collect_health_status().await.unwrap();
+    assert!(matches!(status.status, SystemStatus::Unhealthy { .. }));
+}
 }
