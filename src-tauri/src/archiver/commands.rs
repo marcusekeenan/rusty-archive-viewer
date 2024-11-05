@@ -77,6 +77,7 @@ pub async fn fetch_binned_data(
         })
 }
 
+
 /// Gets data at a specific point in time for multiple PVs
 #[tauri::command]
 pub async fn get_data_at_time(
