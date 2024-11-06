@@ -1,20 +1,19 @@
-import { createSignal, createEffect, For } from 'solid-js';
-import type { ExtendedFetchOptions } from '../../utils/archiverApi';
+import { createSignal, createEffect, For, Show } from 'solid-js';
 
-type TimeRangeSelectorProps = {
-  onChange: (start: Date, end: Date, options: ExtendedFetchOptions) => void;
+interface TimeRangeSelectorProps {
   disabled?: boolean;
-};
+  initialTimezone?: string; // Change to initialTimezone
+  onChange?: (start: Date, end: Date, timezone: string) => void;
+}
 
 const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
-  const [startDate, setStartDate] = createSignal('');
-  const [endDate, setEndDate] = createSignal('');
+  const [startDate, setStartDate] = createSignal<Date>(new Date(Date.now() - 3600000));
+  const [endDate, setEndDate] = createSignal<Date>(new Date());
   const [timezone, setTimezone] = createSignal(
-    Intl.DateTimeFormat().resolvedOptions().timeZone
+    props.initialTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone
   );
   const [relativeRange, setRelativeRange] = createSignal('1h');
 
-  // Configuration options
   const timezones = [
     'UTC',
     'America/Los_Angeles',
@@ -65,21 +64,36 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
     return { start, end: now };
   };
 
-  const formatForInput = (date: Date | null): string => {
-    if (!date) return '';
-    return date.toISOString().slice(0, 19);  // Format: YYYY-MM-DDTHH:mm:ss
+  const formatForInput = (date: Date): string => {
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZone: timezone()
+    }).replace(/(\d+)\/(\d+)\/(\d+), (\d+):(\d+):(\d+)/, '$3-$1-$2T$4:$5');
+  };
+
+  const formatForDisplay = (date: Date): string => {
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'medium',
+        timeZone: timezone()
+      }).format(date);
+    } catch (error) {
+      console.error('Date formatting error:', error);
+      return 'Invalid date';
+    }
   };
 
   const updateTimeRange = (start: Date, end: Date) => {
-    setStartDate(formatForInput(start));
-    setEndDate(formatForInput(end));
-
-    if (props.onChange) {
-      const options: ExtendedFetchOptions = {
-        timezone: timezone(),
-      };
-      props.onChange(start, end, options);
-    }
+    setStartDate(start);
+    setEndDate(end);
+    props.onChange?.(start, end, timezone());
   };
 
   const handleRelativeRangeChange = (value: string) => {
@@ -91,31 +105,37 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
   };
 
   const handleDateInput = (isStart: boolean, value: string) => {
-    if (isStart) {
-      setStartDate(value);
-      updateTimeRange(new Date(value), new Date(endDate()));
-    } else {
-      setEndDate(value);
-      updateTimeRange(new Date(startDate()), new Date(value));
+    try {
+      const date = new Date(value);
+      if (isStart) {
+        updateTimeRange(date, endDate());
+      } else {
+        updateTimeRange(startDate(), date);
+      }
+      setRelativeRange('custom');
+    } catch (error) {
+      console.error('Invalid date input:', error);
     }
-    setRelativeRange('custom');
   };
 
   const handleTimezoneChange = (e: Event) => {
-    const tz = (e.target as HTMLSelectElement).value;
-    setTimezone(tz);
+    const newTimezone = (e.target as HTMLSelectElement).value;
+    setTimezone(newTimezone);
     
-    // Update time range with new timezone if using a relative range
     if (relativeRange() !== 'custom') {
       const { start, end } = getRelativeTimeRange(relativeRange());
       updateTimeRange(start, end);
+    } else {
+      // If in custom mode, update with current dates
+      updateTimeRange(startDate(), endDate());
     }
   };
 
-  // Initialize the time range
+  // Initialize with default range
   createEffect(() => {
-    const { start, end } = getRelativeTimeRange(relativeRange());
-    updateTimeRange(start, end);
+    if (props.initialTimezone && props.initialTimezone !== timezone()) {
+      setTimezone(props.initialTimezone);
+    }
   });
 
   return (
@@ -127,6 +147,7 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
           value={timezone()}
           onChange={handleTimezoneChange}
           class="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+          disabled={props.disabled}
         >
           <For each={timezones}>
             {(tz) => <option value={tz}>{tz.replace('_', ' ')}</option>}
@@ -139,7 +160,7 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
         <label class="font-medium">Time Range</label>
         <select
           value={relativeRange()}
-          onChange={(e) => handleRelativeRangeChange((e.target as HTMLSelectElement).value)}
+          onChange={(e) => handleRelativeRangeChange(e.target.value)}
           class="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           disabled={props.disabled}
         >
@@ -149,33 +170,38 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
         </select>
       </div>
 
-      {/* Start Time Input */}
-      <div class="flex flex-col gap-2">
-        <label class="font-medium">Start Time ({timezone()})</label>
-        <input
-          type="datetime-local"
-          value={startDate()}
-          onInput={(e) => handleDateInput(true, (e.target as HTMLInputElement).value)}
-          disabled={props.disabled || relativeRange() !== 'custom'}
-          class="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        />
-      </div>
+      {/* Custom Time Range Inputs */}
+      <Show when={relativeRange() === 'custom'}>
+        <div class="flex flex-col gap-2">
+          <label class="font-medium">Start Time ({timezone()})</label>
+          <input
+            type="datetime-local"
+            value={formatForInput(startDate())}
+            onInput={(e) => handleDateInput(true, e.target.value)}
+            disabled={props.disabled}
+            class="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 
+                   disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+        </div>
 
-      {/* End Time Input */}
-      <div class="flex flex-col gap-2">
-        <label class="font-medium">End Time ({timezone()})</label>
-        <input
-          type="datetime-local"
-          value={endDate()}
-          onInput={(e) => handleDateInput(false, (e.target as HTMLInputElement).value)}
-          disabled={props.disabled || relativeRange() !== 'custom'}
-          class="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        />
-      </div>
+        <div class="flex flex-col gap-2">
+          <label class="font-medium">End Time ({timezone()})</label>
+          <input
+            type="datetime-local"
+            value={formatForInput(endDate())}
+            onInput={(e) => handleDateInput(false, e.target.value)}
+            disabled={props.disabled}
+            class="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 
+                   disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+        </div>
+      </Show>
 
       {/* Current Range Display */}
       <div class="text-sm text-gray-600 mt-2">
-        Current range: {startDate()} to {endDate()} ({timezone()})
+        <div>Start: {formatForDisplay(startDate())}</div>
+        <div>End: {formatForDisplay(endDate())}</div>
+        <div>Timezone: {timezone()}</div>
       </div>
     </div>
   );

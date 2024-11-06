@@ -22,7 +22,7 @@
         ]
       },
       "window": {
-        "all": false,
+        "all": true,
         "close": true,
         "hide": true,
         "show": true,
@@ -72,14 +72,19 @@
     "updater": {
       "active": false
     },
-    "windows": [
+   "windows": [
       {
-        "fullscreen": false,
+        "label": "main",
+        "url": "index.html",
         "height": 800,
-        "resizable": true,
-        "title": "EPICS Archive Viewer",
-        "width": 1200,
-        "decorations": true
+        "width": 1200
+      },
+      {
+        "label": "debug",
+        "url": "index.html#/debug-view",
+        "height": 600,
+        "width": 800,
+        "visible": false
       }
     ]
   }

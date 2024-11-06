@@ -121,197 +121,161 @@ export default function ChartJs(props: EPICSChartProps) {
     if (!chartRef) return;
 
     const options: ChartOptions<'line'> = {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      layout: {
-        padding: {
-          top: 30,
-          right: 20,
-          bottom: 45,
-          left: 20
-        }
-      },
-      interaction: {
-        mode: 'nearest',
-        axis: 'x',
-        intersect: false
-      },
-      plugins: {
-        legend: {
-          display: true,
-          position: 'top',
-          align: 'start',
-          labels: {
-            usePointStyle: true,
-            pointStyle: 'circle',
-            padding: 15,
-            boxWidth: 8,
-            boxHeight: 8,
-            color: '#333',
-            font: {
-              size: 11
-            }
-          }
-        },
-        tooltip: {
-          position: 'nearest' as const,
-          mode: 'index',
-          intersect: false,
-          backgroundColor: 'rgba(255, 255, 255, 0.95)',
-          titleColor: '#333',
-          bodyColor: '#333',
-          borderColor: '#ddd',
-          borderWidth: 1,
-          padding: 10,
-          callbacks: {
-            title: (context) => {
-              if (!context.length) return '';
-              const timestamp = context[0].parsed.x;
-              return new Date(timestamp).toLocaleString(undefined, {
-                timeZone: props.timezone,
-                dateStyle: 'short',
-                timeStyle: 'medium'
-              });
-            },
-            label: (context) => {
-              const value = context.parsed.y;
-              const dataset = context.dataset;
-              if (!dataset.hidden) {
-                return `${dataset.label}: ${value.toFixed(2)}`;
-              }
-              return '';
-            },
-            labelColor: (context) => ({
-              borderColor: context.dataset.borderColor as string,
-              backgroundColor: context.dataset.borderColor as string,
-            })
-          }
-        },
-        zoom: {
-          pan: {
-            enabled: true,
-            mode: 'x',
-            modifierKey: 'shift',
-          },
-          zoom: {
-            wheel: {
-              enabled: true,
-              modifierKey: 'ctrl'
-            },
-            pinch: {
-              enabled: true
-            },
-            mode: 'x',
-            drag: {
-              enabled: true,
-              backgroundColor: 'rgba(127,127,127,0.2)',
-              borderColor: 'rgba(127,127,127,0.4)',
-              borderWidth: 1
-            }
-          },
-          limits: {
-            x: {
-              min: 'original',
-              max: 'original',
-              minRange: 1000
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          type: 'time',
-          time: {
-            unit: undefined,  // Changed from 'auto' to undefined
-            displayFormats: {
-              millisecond: 'mm:ss.SSS',
-              second: 'mm:ss',
-              minute: 'HH:mm',
-              hour: 'HH:mm',
-              day: 'MMM D',
-              week: 'MMM D',
-              month: 'MMM YYYY',
-              quarter: '[Q]Q YYYY',
-              year: 'YYYY'
-            },
-          },
-          adapters: {
-            date: {
-              zone: props.timezone
-            }
-          },
-          grid: {
-            color: 'rgba(0,0,0,0.05)',  // Lighter grid
-            tickLength: 0  // Remove tick marks
-          },
-          ticks: {
-            maxRotation: 0,
-            autoSkip: true,
-            maxTicksLimit: 8,  // Limit number of ticks
-            padding: 8,
-            font: {
-              size: 11
-            },
-            major: {
-              enabled: true
-            },
-            // Custom callback to format time based on range
-            callback: (value, index, ticks) => {
-              const date = new Date(value);
-              const earliest = ticks[0]?.value || date;
-              const latest = ticks[ticks.length - 1]?.value || date;
-              const range = latest - earliest;
-              const hours = range / (1000 * 60 * 60);
-      
-              if (hours <= 1) {
-                return date.toLocaleTimeString(undefined, {
-                  hour: undefined,
-                  minute: '2-digit',
-                  second: '2-digit',
-                  timeZone: props.timezone
-                });
-              } else if (hours <= 24) {
-                return date.toLocaleTimeString(undefined, {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  timeZone: props.timezone
-                });
-              } else {
-                return date.toLocaleString(undefined, {
-                  month: 'short',
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  timeZone: props.timezone
-                });
-              }
-            }
-          },
-          border: {
-            display: false  // Remove axis line
-          }
-        },
-        y: {
-          beginAtZero: false,
-          grid: {
-            color: 'rgba(0,0,0,0.05)',  // Lighter grid
-            tickLength: 0  // Remove tick marks
-          },
-          border: {
-            display: false  // Remove axis line
-          },
-          ticks: {
-            padding: 8,
-            maxTicksLimit: 8,  // Limit number of ticks
-            callback: (value) => typeof value === 'number' ? value.toFixed(2) : value,
-            font: {
-              size: 11
-            }
-          }
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: false,
+  layout: {
+    padding: {
+      top: 30,
+      right: 20,
+      bottom: 45,
+      left: 20
+    }
+  },
+  interaction: {
+    mode: 'nearest',
+    axis: 'x',
+    intersect: false
+  },
+  plugins: {
+    legend: {
+      display: true,
+      position: 'top',
+      align: 'start',
+      labels: {
+        usePointStyle: true,
+        pointStyle: 'circle',
+        padding: 15,
+        boxWidth: 8,
+        boxHeight: 8,
+        color: '#333',
+        font: {
+          size: 11
         }
       }
-    };
+    },
+    tooltip: {
+      position: 'nearest' as const,
+      mode: 'index',
+      intersect: false,
+      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+      titleColor: '#333',
+      bodyColor: '#333',
+      borderColor: '#ddd',
+      borderWidth: 1,
+      padding: 10,
+      callbacks: {
+        title: (context) => {
+          if (!context.length) return '';
+          const timestamp = context[0].parsed.x;
+          return new Date(timestamp).toLocaleString();  // Display raw timestamp as received
+        },
+        label: (context) => {
+          const value = context.parsed.y;
+          const dataset = context.dataset;
+          if (!dataset.hidden) {
+            return `${dataset.label}: ${value.toFixed(2)}`;
+          }
+          return '';
+        },
+        labelColor: (context) => ({
+          borderColor: context.dataset.borderColor as string,
+          backgroundColor: context.dataset.borderColor as string,
+        })
+      }
+    },
+    zoom: {
+      pan: {
+        enabled: true,
+        mode: 'x',
+        modifierKey: 'shift',
+      },
+      zoom: {
+        wheel: {
+          enabled: true,
+          modifierKey: 'ctrl'
+        },
+        pinch: {
+          enabled: true
+        },
+        mode: 'x',
+        drag: {
+          enabled: true,
+          backgroundColor: 'rgba(127,127,127,0.2)',
+          borderColor: 'rgba(127,127,127,0.4)',
+          borderWidth: 1
+        }
+      },
+      limits: {
+        x: {
+          min: 'original',
+          max: 'original',
+          minRange: 1000
+        }
+      }
+    }
+  },
+  scales: {
+    x: {
+      type: 'time',
+      time: {
+        displayFormats: {
+          millisecond: 'mm:ss.SSS',
+          second: 'mm:ss',
+          minute: 'HH:mm',
+          hour: 'HH:mm',
+          day: 'MMM D',
+          week: 'MMM D',
+          month: 'MMM YYYY',
+          quarter: '[Q]Q YYYY',
+          year: 'YYYY'
+        }
+      },
+      grid: {
+        color: 'rgba(0,0,0,0.05)',  // Lighter grid
+        tickLength: 0  // Remove tick marks
+      },
+      ticks: {
+        maxRotation: 0,
+        autoSkip: true,
+        maxTicksLimit: 8,
+        padding: 8,
+        font: {
+          size: 11
+        },
+        major: {
+          enabled: true
+        },
+        callback: (value) => {
+          return new Date(value).toLocaleString();  // Display raw timestamp as received
+        }
+      },
+      border: {
+        display: false  // Remove axis line
+      }
+    },
+    y: {
+      beginAtZero: false,
+      grid: {
+        color: 'rgba(0,0,0,0.05)',  // Lighter grid
+        tickLength: 0  // Remove tick marks
+      },
+      border: {
+        display: false  // Remove axis line
+      },
+      ticks: {
+        padding: 8,
+        maxTicksLimit: 8,
+        callback: (value) => typeof value === 'number' ? value.toFixed(2) : value,
+        font: {
+          size: 11
+        }
+      }
+    }
+  }
+};
+
+    
 
     chartInstance = new ChartJS(chartRef, {
       type: 'line',
@@ -322,21 +286,51 @@ export default function ChartJs(props: EPICSChartProps) {
 
   const updateChart = () => {
     const processedData = processData(props.data);
-
+  
     if (chartInstance) {
-      chartInstance.data = processedData;
-      chartInstance.update('none');
+      const currentDatasets = chartInstance.data.datasets;
+      const newDatasets = processedData.datasets;
+  
+      let hasChanges = false;
+      newDatasets.forEach((dataset, i) => {
+        const currentDataset = currentDatasets[i];
+        if (!currentDataset || 
+            dataset.data.length !== currentDataset.data.length || 
+            !dataset.data.every((point, j) => {
+              const currentPoint = currentDataset.data[j];
+      
+              // Check if currentPoint has x and y properties
+              if (
+                currentPoint &&
+                typeof currentPoint === 'object' &&
+                'x' in currentPoint &&
+                'y' in currentPoint
+              ) {
+                return point.x === currentPoint.x && point.y === currentPoint.y;
+              }
+              return false;
+            })) {
+          hasChanges = true;
+        }
+      });
+      
+  
+      if (hasChanges) {
+        chartInstance.data = processedData;
+        chartInstance.update('none');
+      }
     } else {
       createChart(processedData);
     }
   };
+  
 
   const handleResize = () => {
     if (chartInstance && chartRef?.parentElement) {
-      const { width, height } = chartRef.parentElement.getBoundingClientRect();
       chartInstance.resize();
     }
   };
+  
 
   onMount(() => {
     if (chartRef) {

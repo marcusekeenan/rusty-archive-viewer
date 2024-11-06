@@ -13,27 +13,60 @@ pub static API_CONFIG: Lazy<APIConfig> = Lazy::new(|| APIConfig {
 
 pub static OPERATORS: Lazy<HashMap<&'static str, Operator>> = Lazy::new(|| {
     let mut m = HashMap::new();
-    
+
     // Basic operators
     m.insert("raw", Operator::new("raw", "Returns raw unprocessed data"));
-    m.insert("mean", Operator::new("mean", "Returns the average value of samples in a bin"));
-    m.insert("median", Operator::new("median", "Returns the median value in a bin"));
-    
+    m.insert(
+        "mean",
+        Operator::new("mean", "Returns the average value of samples in a bin"),
+    );
+    m.insert(
+        "median",
+        Operator::new("median", "Returns the median value in a bin"),
+    );
+
     // Statistical operators
-    m.insert("std", Operator::new("std", "Returns the standard deviation of values in a bin"));
-    m.insert("var", Operator::new("var", "Returns the variance of values in a bin"));
-    
+    m.insert(
+        "std",
+        Operator::new("std", "Returns the standard deviation of values in a bin"),
+    );
+    m.insert(
+        "var",
+        Operator::new("var", "Returns the variance of values in a bin"),
+    );
+
     // Sampling operators
-    m.insert("firstSample", Operator::new("firstSample", "Returns the first sample in a bin"));
-    m.insert("lastSample", Operator::new("lastSample", "Returns the last sample in a bin"));
-    
+    m.insert(
+        "firstSample",
+        Operator::new("firstSample", "Returns the first sample in a bin"),
+    );
+    m.insert(
+        "lastSample",
+        Operator::new("lastSample", "Returns the last sample in a bin"),
+    );
+
     // Optimized operators for different time ranges
-    m.insert("optimized_360", Operator::new("optimized_360", "10-second resolution optimization"));
-    m.insert("optimized_720", Operator::new("optimized_720", "30-second resolution optimization"));
-    m.insert("optimized_1440", Operator::new("optimized_1440", "1-minute resolution optimization"));
-    m.insert("optimized_2016", Operator::new("optimized_2016", "5-minute resolution optimization"));
-    m.insert("optimized_4320", Operator::new("optimized_4320", "10-minute resolution optimization"));
-    
+    m.insert(
+        "optimized_360",
+        Operator::new("optimized_360", "10-second resolution optimization"),
+    );
+    m.insert(
+        "optimized_720",
+        Operator::new("optimized_720", "30-second resolution optimization"),
+    );
+    m.insert(
+        "optimized_1440",
+        Operator::new("optimized_1440", "1-minute resolution optimization"),
+    );
+    m.insert(
+        "optimized_2016",
+        Operator::new("optimized_2016", "5-minute resolution optimization"),
+    );
+    m.insert(
+        "optimized_4320",
+        Operator::new("optimized_4320", "10-minute resolution optimization"),
+    );
+
     m
 });
 

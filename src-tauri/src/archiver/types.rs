@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,22 +55,23 @@ impl DataFormat {
     }
 }
 
-
 // Custom deserializer for string or number precision
 fn deserialize_string_or_number<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
 where
     D: Deserializer<'de>,
 {
     use serde::de::Error;
-    
+
     let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
     match value {
-        serde_json::Value::String(s) => {
-            s.parse().map(Some).map_err(|_| D::Error::custom("Invalid precision value"))
-        },
-        serde_json::Value::Number(n) => {
-            n.as_i64().map(|n| Some(n as i32)).ok_or_else(|| D::Error::custom("Invalid number"))
-        },
+        serde_json::Value::String(s) => s
+            .parse()
+            .map(Some)
+            .map_err(|_| D::Error::custom("Invalid precision value")),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(|n| Some(n as i32))
+            .ok_or_else(|| D::Error::custom("Invalid number")),
         _ => Ok(None),
     }
 }
@@ -217,7 +218,7 @@ pub struct ExtendedFetchOptions {
     pub ca_count: Option<i32>,
     pub ca_how: Option<i32>,
     pub use_raw_processing: Option<bool>,
-    pub format: Option<DataFormat>,  // Added format field
+    pub format: Option<DataFormat>, // Added format field
 }
 
 /// Point-in-time data response
@@ -236,25 +237,28 @@ pub struct PointValue {
     pub status: Option<i32>,
 }
 
-/// Data operator configuration
 /// Data operator configuration that matches the EPICS Archiver Appliance capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DataOperator {
     #[serde(rename = "raw")]
     Raw,
-    
+
+    // Optimized operator (new)
+    #[serde(rename = "optimized")]
+    Optimized(i32), // number of points parameter
+
     // Default binning operators
     #[serde(rename = "firstSample")]
-    FirstSample(Option<i32>),  // Optional binning interval in seconds
+    FirstSample(Option<i32>),
     #[serde(rename = "lastSample")]
     LastSample(Option<i32>),
-    
-    // Fill operators (with bin center timestamp)
+
+    // Fill operators
     #[serde(rename = "firstFill")]
     FirstFill(Option<i32>),
     #[serde(rename = "lastFill")]
     LastFill(Option<i32>),
-    
+
     // Statistical operators
     #[serde(rename = "mean")]
     Mean(Option<i32>),
@@ -264,14 +268,14 @@ pub enum DataOperator {
     Max(Option<i32>),
     #[serde(rename = "count")]
     Count(Option<i32>),
-    
+
     // Special operators
     #[serde(rename = "ncount")]
-    NCount,  // Total number of samples in time span
+    NCount,
     #[serde(rename = "nth")]
-    Nth(i32),  // Every nth value
-    
-    // Statistical measures with binning
+    Nth(i32),
+
+    // Statistical measures
     #[serde(rename = "median")]
     Median(Option<i32>),
     #[serde(rename = "std")]
@@ -280,20 +284,20 @@ pub enum DataOperator {
     Variance(Option<i32>),
     #[serde(rename = "popvariance")]
     PopVariance(Option<i32>),
-    
-    // Advanced statistical operators
+
+    // Advanced operators
     #[serde(rename = "jitter")]
     Jitter(Option<i32>),
     #[serde(rename = "kurtosis")]
     Kurtosis(Option<i32>),
     #[serde(rename = "skewness")]
     Skewness(Option<i32>),
-    
+
     // Flyer detection
     #[serde(rename = "ignoreflyers")]
     IgnoreFlyers {
         bin_size: Option<i32>,
-        deviations: f64,  // Default is 3.0
+        deviations: f64,
     },
     #[serde(rename = "flyers")]
     Flyers {
@@ -306,6 +310,7 @@ impl DataOperator {
     pub fn to_string(&self) -> String {
         match self {
             DataOperator::Raw => "raw".to_string(),
+            DataOperator::Optimized(points) => format!("optimized_{}", points),
             DataOperator::FirstSample(None) => "firstSample".to_string(),
             DataOperator::FirstSample(Some(bin)) => format!("firstSample_{}", bin),
             DataOperator::LastSample(None) => "lastSample".to_string(),
@@ -338,28 +343,138 @@ impl DataOperator {
             DataOperator::Kurtosis(Some(bin)) => format!("kurtosis_{}", bin),
             DataOperator::Skewness(None) => "skewness".to_string(),
             DataOperator::Skewness(Some(bin)) => format!("skewness_{}", bin),
-            DataOperator::IgnoreFlyers { bin_size: None, deviations } => 
-                format!("ignoreflyers_{}", deviations),
-            DataOperator::IgnoreFlyers { bin_size: Some(bin), deviations } => 
-                format!("ignoreflyers_{}_{}", bin, deviations),
-            DataOperator::Flyers { bin_size: None, deviations } => 
-                format!("flyers_{}", deviations),
-            DataOperator::Flyers { bin_size: Some(bin), deviations } => 
-                format!("flyers_{}_{}", bin, deviations),
+            DataOperator::IgnoreFlyers {
+                bin_size: None,
+                deviations,
+            } => format!("ignoreflyers_{}", deviations),
+            DataOperator::IgnoreFlyers {
+                bin_size: Some(bin),
+                deviations,
+            } => format!("ignoreflyers_{}_{}", bin, deviations),
+            DataOperator::Flyers {
+                bin_size: None,
+                deviations,
+            } => format!("flyers_{}", deviations),
+            DataOperator::Flyers {
+                bin_size: Some(bin),
+                deviations,
+            } => format!("flyers_{}_{}", bin, deviations),
         }
     }
 
-    // Helper method to get default bin size based on time range
-    pub fn default_bin_size(duration_seconds: i64) -> i32 {
-        match duration_seconds {
-            d if d <= 3600 => 10,      // <= 1 hour: 10 second bins
-            d if d <= 86400 => 60,     // <= 1 day: 1 minute bins
-            d if d <= 604800 => 300,   // <= 1 week: 5 minute bins
-            _ => 900,                  // > 1 week: 15 minute bins
+    pub fn supports_binning(&self) -> bool {
+        !matches!(
+            self,
+            DataOperator::Raw | DataOperator::NCount | DataOperator::Nth(_)
+        )
+    }
+
+    // Creates an optimized operator with the specified number of points
+    pub fn get_optimized(points: i32) -> Self {
+        DataOperator::Optimized(points)
+    }
+
+    // Checks if this is an optimized operator
+    pub fn is_optimized(&self) -> bool {
+        matches!(self, DataOperator::Optimized(_))
+    }
+
+    // Gets the bin size if the operator supports it
+    pub fn get_bin_size(&self) -> Option<i32> {
+        match self {
+            DataOperator::FirstSample(bin)
+            | DataOperator::LastSample(bin)
+            | DataOperator::FirstFill(bin)
+            | DataOperator::LastFill(bin)
+            | DataOperator::Mean(bin)
+            | DataOperator::Min(bin)
+            | DataOperator::Max(bin)
+            | DataOperator::Count(bin)
+            | DataOperator::Median(bin)
+            | DataOperator::Std(bin)
+            | DataOperator::Variance(bin)
+            | DataOperator::PopVariance(bin)
+            | DataOperator::Jitter(bin)
+            | DataOperator::Kurtosis(bin)
+            | DataOperator::Skewness(bin) => *bin,
+            DataOperator::IgnoreFlyers { bin_size, .. } | DataOperator::Flyers { bin_size, .. } => {
+                *bin_size
+            }
+            _ => None,
         }
+    }
+
+    // Gets the appropriate bin size for a duration
+    pub fn get_bin_size_for_duration(duration_seconds: i64) -> i32 {
+        match duration_seconds {
+            d if d <= 3600 => 10,    // <= 1 hour: 10 second bins
+            d if d <= 86400 => 60,   // <= 1 day: 1 minute bins
+            d if d <= 604800 => 300, // <= 1 week: 5 minute bins
+            _ => 900,                // > 1 week: 15 minute bins
+        }
+    }
+
+    // Creates an operator with an appropriate bin size for the duration
+    pub fn with_duration(operator_type: &str, duration_seconds: i64) -> Result<Self, String> {
+        let bin_size = Some(Self::get_bin_size_for_duration(duration_seconds));
+        match operator_type {
+            "mean" => Ok(DataOperator::Mean(bin_size)),
+            "firstSample" => Ok(DataOperator::FirstSample(bin_size)),
+            "lastSample" => Ok(DataOperator::LastSample(bin_size)),
+            "firstFill" => Ok(DataOperator::FirstFill(bin_size)),
+            "lastFill" => Ok(DataOperator::LastFill(bin_size)),
+            "min" => Ok(DataOperator::Min(bin_size)),
+            "max" => Ok(DataOperator::Max(bin_size)),
+            "count" => Ok(DataOperator::Count(bin_size)),
+            "median" => Ok(DataOperator::Median(bin_size)),
+            "std" => Ok(DataOperator::Std(bin_size)),
+            _ => Err(format!("Unsupported operator type: {}", operator_type)),
+        }
+    }
+
+    // Gets the optimal operator for a time range and chart width
+    pub fn get_optimal(duration_seconds: i64, chart_width: Option<i32>) -> Self {
+        let points_per_pixel = if let Some(width) = chart_width {
+            duration_seconds as f64 / width as f64
+        } else {
+            duration_seconds as f64 / 1000.0
+        };
+
+        if points_per_pixel <= 1.0 {
+            DataOperator::Raw
+        } else {
+            let target_points = chart_width.unwrap_or(1000);
+            DataOperator::Optimized(target_points)
+        }
+    }
+
+    // Checks if this operator produces statistical outputs
+    pub fn is_statistical(&self) -> bool {
+        matches!(
+            self,
+            DataOperator::Mean(_)
+                | DataOperator::Median(_)
+                | DataOperator::Std(_)
+                | DataOperator::Variance(_)
+                | DataOperator::PopVariance(_)
+                | DataOperator::Jitter(_)
+                | DataOperator::Kurtosis(_)
+                | DataOperator::Skewness(_)
+        )
+    }
+
+    // Checks if this operator preserves time resolution
+    pub fn preserves_time_resolution(&self) -> bool {
+        matches!(
+            self,
+            DataOperator::Raw
+                | DataOperator::FirstSample(None)
+                | DataOperator::LastSample(None)
+                | DataOperator::NCount
+                | DataOperator::Nth(_)
+        )
     }
 }
-
 /// Time range specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeRange {
@@ -392,16 +507,5 @@ impl Point {
             Value::Array(arr) if !arr.is_empty() => Some(arr[0]),
             _ => None,
         }
-    }
-}
-
-impl DataOperator {
-    /// Returns true if this operator supports binning
-    pub fn supports_binning(&self) -> bool {
-        !matches!(self, 
-            DataOperator::Raw | 
-            DataOperator::NCount | 
-            DataOperator::Nth(_)
-        )
     }
 }

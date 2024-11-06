@@ -1,6 +1,7 @@
-import { invoke } from "@tauri-apps/api";
+import { invoke } from "@tauri-apps/api/tauri";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
-// Type definitions matching Rust types
+// Type definitions
 export interface Meta {
     name: string;
     egu: string;
@@ -50,18 +51,9 @@ export interface NormalizedPVData {
     statistics?: Statistics;
 }
 
-export interface ExtendedFetchOptions {
-    operator?: string;
+export interface FetchOptions {
     timezone?: string;
     chart_width?: number;
-    batch_size?: number;
-    fetch_latest_metadata?: boolean;
-    retired_pv_template?: string;
-    do_not_chunk?: boolean;
-    ca_count?: number;
-    ca_how?: number;
-    use_raw_processing?: boolean;
-    format?: DataFormat;
 }
 
 export enum DataFormat {
@@ -91,28 +83,48 @@ export interface PVStatus {
     last_error?: string;
 }
 
-// API Functions
-
 /**
- * Fetches binned data for multiple PVs
+ * Main data fetching function - backend handles optimization
  */
-export async function fetchBinnedData(
+export async function fetchData(
     pvs: string[],
-    from: Date,
-    to: Date,
-    options?: ExtendedFetchOptions
+    start: Date,
+    end: Date,
+    chartWidth: number,
+    timezone: string,
 ): Promise<NormalizedPVData[]> {
+    // Convert parameters to snake_case for Tauri
     const params = {
         pvs,
-        from: Math.floor(from.getTime() / 1000),
-        to: Math.floor(to.getTime() / 1000),
-        options,
+        from: Math.floor(start.getTime() / 1000),
+        to: Math.floor(end.getTime() / 1000),
+        chartWidth: chartWidth,  // Use snake_case for Tauri command
+        timezone
+    };
+    console.log("the timezone is from api", timezone);
+    try {
+        return await invoke<NormalizedPVData[]>("fetch_data", params);
+    } catch (error) {
+        console.error("Error fetching data:", error);
+        throw error;
+    }
+}
+
+export async function fetchLiveData(
+    pvs: string[],
+    timestamp?: Date,
+    timezone?: string
+): Promise<Record<string, PointValue>> {
+    const params = {
+        pvs,
+        timestamp: timestamp ? Math.floor(timestamp.getTime() / 1000) : Math.floor(Date.now() / 1000),
+        timezone
     };
 
     try {
-        return await invoke<NormalizedPVData[]>("fetch_binned_data", params);
+        return await invoke<Record<string, PointValue>>("fetch_live_data", params);
     } catch (error) {
-        console.error("Error fetching binned data:", error);
+        console.error("Error getting live data:", error);
         throw error;
     }
 }
@@ -130,121 +142,25 @@ export async function getPVMetadata(pv: string): Promise<Meta> {
 }
 
 /**
- * Gets data at a specific point in time for multiple PVs
- */
-export async function get_data_at_time(
-  pvs: string[],
-  timestamp: number,  // Changed from Date to number (seconds since epoch)
-  options?: ExtendedFetchOptions
-): Promise<Record<string, PointValue>> {
-  const params = {
-      pvs,
-      timestamp,  // Already in seconds
-      options,
-  };
-
-  try {
-      return await invoke<Record<string, PointValue>>("get_data_at_time", params);
-  } catch (error) {
-      console.error("Error getting data at time:", error);
-      throw error;
-  }
-}
-
-/**
  * Exports data in various formats
  */
 export async function exportData(
     pvs: string[],
     from: Date,
     to: Date,
-    format: DataFormat,
-    options?: ExtendedFetchOptions
+    format: DataFormat
 ): Promise<string> {
     const params = {
         pvs,
         from: Math.floor(from.getTime() / 1000),
         to: Math.floor(to.getTime() / 1000),
-        format,
-        options,
+        format
     };
 
     try {
         return await invoke<string>("export_data", params);
     } catch (error) {
         console.error("Error exporting data:", error);
-        throw error;
-    }
-}
-
-/**
- * Fetches data with a specific operator
- */
-export async function fetchDataWithOperator(
-    pvs: string[],
-    from: Date,
-    to: Date,
-    operator: string,
-    options?: ExtendedFetchOptions
-): Promise<NormalizedPVData[]> {
-    const params = {
-        pvs,
-        from: Math.floor(from.getTime() / 1000),
-        to: Math.floor(to.getTime() / 1000),
-        operator,
-        options,
-    };
-
-    try {
-        return await invoke<NormalizedPVData[]>("fetch_data_with_operator", params);
-    } catch (error) {
-        console.error("Error fetching data with operator:", error);
-        throw error;
-    }
-}
-
-/**
- * Fetches raw data without any processing
- */
-export async function fetchRawData(
-    pvs: string[],
-    from: Date,
-    to: Date
-): Promise<NormalizedPVData[]> {
-    const params = {
-        pvs,
-        from: Math.floor(from.getTime() / 1000),
-        to: Math.floor(to.getTime() / 1000),
-    };
-
-    try {
-        return await invoke<NormalizedPVData[]>("fetch_raw_data", params);
-    } catch (error) {
-        console.error("Error fetching raw data:", error);
-        throw error;
-    }
-}
-
-/**
- * Fetches optimized data based on time range and display width
- */
-export async function fetchOptimizedData(
-    pvs: string[],
-    from: Date,
-    to: Date,
-    chartWidth: number
-): Promise<NormalizedPVData[]> {
-    const params = {
-        pvs,
-        from: Math.floor(from.getTime() / 1000),
-        to: Math.floor(to.getTime() / 1000),
-        chart_width: chartWidth,
-    };
-
-    try {
-        return await invoke<NormalizedPVData[]>("fetch_optimized_data", params);
-    } catch (error) {
-        console.error("Error fetching optimized data:", error);
         throw error;
     }
 }
@@ -281,6 +197,45 @@ export async function testConnection(): Promise<boolean> {
         return await invoke<boolean>("test_connection");
     } catch (error) {
         console.error("Error testing connection:", error);
+        throw error;
+    }
+}
+
+export interface LiveUpdateConfig {
+    pvs: string[];
+    bufferSize?: number;
+    callback: (data: NormalizedPVData[]) => void;
+}
+
+/**
+ * Starts live updates for the specified PVs
+ */
+export async function startLiveUpdates(config: LiveUpdateConfig): Promise<UnlistenFn> {
+    try {
+        // Start the live updates on the backend
+        await invoke<void>("start_live_updates", {
+            pvs: config.pvs,
+            buffer_size: config.bufferSize
+        });
+
+        // Set up the event listener for updates
+        return await listen<NormalizedPVData[]>("live-data-update", (event) => {
+            config.callback(event.payload);
+        });
+    } catch (error) {
+        console.error("Error starting live updates:", error);
+        throw error;
+    }
+}
+
+/**
+ * Stops live updates
+ */
+export async function stopLiveUpdates(): Promise<void> {
+    try {
+        await invoke<void>("stop_live_updates");
+    } catch (error) {
+        console.error("Error stopping live updates:", error);
         throw error;
     }
 }

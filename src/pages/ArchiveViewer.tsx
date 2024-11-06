@@ -1,4 +1,5 @@
-// ArchiveViewer.tsx
+import { invoke } from "@tauri-apps/api/tauri";
+import { emit } from '@tauri-apps/api/event';
 import {
   createSignal,
   createEffect,
@@ -7,94 +8,51 @@ import {
   Show,
   For,
 } from "solid-js";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "../components/ui/dialog";
+import DebugDialog from "./DebugDialog";
 import PVSelector from "../components/controls/PVSelector";
 import TimeRangeSelector from "../components/controls/TimeRangeSelector";
 import ChartJS from "../components/chart/ChartJS";
 import ChartuPlot from "../components/chart/ChartuPlot";
 import {
-  fetchBinnedData,
-  get_data_at_time,
-  type ExtendedFetchOptions,
+  fetchData,
+  fetchLiveData,
   type NormalizedPVData,
+  type PointValue,
 } from "../utils/archiverApi";
 import type {
   PVWithProperties,
   PenProperties,
 } from "../components/controls/types";
-
 import { Dynamic } from "solid-js/web";
 
-// Constants
-const DEBUG_LOG_LIMIT = 50;
-
-const DISPLAY_MODES = [
-  { value: "raw", label: "Raw Data" },
-  { value: "firstSample", label: "First Sample" },
-  { value: "lastSample", label: "Last Sample" },
-  { value: "firstFill", label: "First Fill (with interpolation)" },
-  { value: "lastFill", label: "Last Fill (with interpolation)" },
-  { value: "mean", label: "Mean Value" },
-  { value: "min", label: "Minimum Value" },
-  { value: "max", label: "Maximum Value" },
-  { value: "count", label: "Sample Count" },
-  { value: "median", label: "Median Value" },
-  { value: "std", label: "Standard Deviation" },
-] as const;
-
-type ProcessingMode = (typeof DISPLAY_MODES)[number]["value"];
-
-type TimeRange = {
+// Types
+interface TimeRange {
   start: Date;
   end: Date;
-};
+}
 
-type DebugLog = {
+interface RealTimeConfig {
+  enabled: boolean;
+  bufferSize: number;
+  updateInterval: number;
+}
+
+interface DebugLog {
   timestamp: string;
   message: string;
   type: "info" | "error" | "debug" | "success";
   details?: string | null;
-};
+}
 
-type DebugDialogProps = {
+interface DebugDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  data: NormalizedPVData[];
-};
+  data: DebugLog[];  // Change to DebugLog[]
+}
 
-type RealTimeMode = {
-  enabled: boolean;
-  updateInterval: number;
-  lastTimestamp: number;
-  bufferSize: number;
-  operator: string;
-};
-
-// Debug Dialog Component
-const DebugDialog = (props: DebugDialogProps) => (
-  <Dialog
-    open={props.isOpen}
-    onOpenChange={(isOpen) => !isOpen && props.onClose()}
-  >
-    <DialogContent class="max-w-4xl max-h-[80vh]">
-      <DialogHeader>
-        <DialogTitle>Debug Information</DialogTitle>
-      </DialogHeader>
-      <div class="p-4 bg-gray-50 rounded">
-        <div class="overflow-auto max-h-[60vh]">
-          <pre class="whitespace-pre-wrap break-words">
-            {JSON.stringify(props.data, null, 2)}
-          </pre>
-        </div>
-      </div>
-    </DialogContent>
-  </Dialog>
-);
+const DEBUG_LOG_LIMIT = 50;
+const DEFAULT_UPDATE_INTERVAL = 1000; // 1 second
+const DEFAULT_BUFFER_SIZE = 3600; // 1 hour of data points
 
 export default function ArchiveViewer() {
   let chartContainer: HTMLDivElement | undefined;
@@ -106,258 +64,201 @@ export default function ArchiveViewer() {
     start: new Date(Date.now() - 3600000), // Last hour by default
     end: new Date(),
   });
-  const [currentOptions, setCurrentOptions] =
-    createSignal<ExtendedFetchOptions>({});
   const [data, setData] = createSignal<NormalizedPVData[]>([]);
   const [loading, setLoading] = createSignal<boolean>(false);
   const [error, setError] = createSignal<string | null>(null);
   const [debugLogs, setDebugLogs] = createSignal<DebugLog[]>([]);
   const [showDebugData, setShowDebugData] = createSignal<boolean>(false);
   const [lastRefresh, setLastRefresh] = createSignal<Date | null>(null);
-
   const [selectedChart, setSelectedChart] = createSignal<"chartjs" | "uplot">(
     "chartjs"
   );
-  const [processingMode, setProcessingMode] =
-    createSignal<ProcessingMode>("raw");
-
-  const [realTimeMode, setRealTimeMode] = createSignal<RealTimeMode>({
+  const [realTimeConfig, setRealTimeConfig] = createSignal<RealTimeConfig>({
     enabled: false,
-    updateInterval: 1000,
-    lastTimestamp: Date.now(),
-    bufferSize: 3600, // 1 hour of second data
-    operator: "raw",
+    bufferSize: DEFAULT_BUFFER_SIZE,
+    updateInterval: DEFAULT_UPDATE_INTERVAL,
   });
+  const [timezone, setTimezone] = createSignal(
+    Intl.DateTimeFormat().resolvedOptions().timeZone
+  );
 
   // Computed values
-  const chartKey = createMemo(() => {
-    return `${data().length}-${lastRefresh()?.getTime()}`;
-  });
-
-  const totalPoints = () => {
-    const allData = visibleData();
-    return allData.reduce((sum, pv) => sum + (pv.data?.length || 0), 0);
-  };
-
-  const visibleData = () => {
+  const chartWidth = createMemo(
+    () => chartContainer?.clientWidth || window.innerWidth
+  );
+  const visibleData = createMemo(() => {
     const allData = data();
     const visiblePVNames = visiblePVs();
     return allData.filter((pv) => visiblePVNames.has(pv.meta.name));
-  };
+  });
+
+  const totalPoints = createMemo(() => {
+    return visibleData().reduce((sum, pv) => sum + (pv.data?.length || 0), 0);
+  });
+
   // Debug Logging
-  const addDebugLog = (
-    message: string,
-    type: DebugLog["type"] = "info",
-    details: any = null
-  ) => {
-    const log: DebugLog = {
-      timestamp: new Date().toISOString(),
-      message,
-      type,
-      details: details ? JSON.stringify(details, null, 2) : null,
-    };
-    setDebugLogs((prev) => [...prev.slice(-DEBUG_LOG_LIMIT + 1), log]);
-    if (type === "error") console.error(message, details);
-    if (type === "debug") console.debug(message, details);
+const addDebugLog = async (
+  message: string,
+  type: DebugLog["type"] = "info",
+  details: unknown = null
+) => {
+  const log: DebugLog = {
+    timestamp: new Date().toISOString(),
+    message,
+    type,
+    details: details ? JSON.stringify(details, null, 2) : null,
   };
 
-  // Utility functions
-  const extractBinSize = (operator: string): number => {
-    const match = operator.match(/_(\d+)$/);
-    return match ? parseInt(match[1], 10) : 60; // default 1 minute
-  };
+  // Log to console for development
+  if (type === "error") console.error(message, details);
+  if (type === "debug") console.debug(message, details);
 
-  const mergeBinnedData = (
-    oldData: NormalizedPVData[],
-    newData: NormalizedPVData[],
-    bufferSize: number
-  ): NormalizedPVData[] => {
-    return oldData.map((pvData) => {
-      const newPVData = newData.find((d) => d.meta.name === pvData.meta.name);
-      if (!newPVData) return pvData;
+  try {
+    await emit('debug-log', log);
+  } catch (error) {
+    console.debug('Failed to emit debug log:', error);
+  }
+};
 
-      return {
-        ...pvData,
-        data: [...pvData.data, ...newPVData.data]
-          .sort((a, b) => a.timestamp - b.timestamp)
-          .filter(
-            (item, index, array) =>
-              index === array.findIndex((t) => t.timestamp === item.timestamp)
-          )
-          .slice(-bufferSize),
-      };
-    });
-  };
+  // Data Fetching Logic
+  const fetchDataForPVs = async () => {
+    console.log("the timezone is", timezone())
+    try {
+        const pvs = selectedPVs();
+        if (pvs.length === 0) {
+            throw new Error("No PVs selected");
+        }
 
-  // Handle PV visibility toggle
-  const handlePVVisibilityToggle = (pvName: string, isVisible: boolean) => {
-    setVisiblePVs((prev) => {
-      const newSet = new Set(prev);
-      if (isVisible) {
-        newSet.add(pvName);
-      } else {
-        newSet.delete(pvName);
-      }
-      return newSet;
-    });
-    addDebugLog(`Toggled visibility for ${pvName}`, "debug", { isVisible });
-  };
+        const range = timeRange();
+        if (!range.start || !range.end) {
+            throw new Error("Invalid time range");
+        }
+
+        const width = chartWidth();
+        const responseData = await fetchData(
+            pvs.map((pv) => pv.name),
+            range.start,
+            range.end,
+            width,  // This will be converted to snake_case in the API layer
+            timezone()
+        );
+        if (Array.isArray(responseData) && responseData.length > 0) {
+            const dataWithProps = responseData.map((data, index) => ({
+                ...data,
+                pen: pvs[index].pen,
+            }));
+
+            setData(dataWithProps);
+            setError(null);
+            setLastRefresh(new Date());
+
+            addDebugLog("Data fetched successfully", "debug", {
+                timestamp: new Date().toISOString(),
+                pointCount: dataWithProps.reduce(
+                    (sum, pv) => sum + pv.data.length,
+                    0
+                ),
+                timeRange: {
+                    start: range.start.toISOString(),
+                    end: range.end.toISOString(),
+                },
+                timezone: timezone(),
+            });
+        } else {
+            throw new Error("No data received");
+        }
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setError(errorMessage);
+        addDebugLog(errorMessage, "error", { error: err });
+    }
+};
 
   // Real-time update logic
   const updateRealTimeData = async () => {
-    if (!realTimeMode().enabled) return;
-  
+    if (!realTimeConfig().enabled) return;
+
     try {
-      const currentTime = new Date();
       const pvs = selectedPVs();
-      
-      if (processingMode() === 'raw') {
-        // Convert timestamp to seconds since epoch
-        const timestamp = Math.floor(currentTime.getTime() / 1000);
-  
-        addDebugLog('Fetching latest data', 'debug', {
-          timestamp,
-          pvCount: pvs.length,
-          currentTime: currentTime.toISOString()
-        });
-  
-        const latestData = await get_data_at_time(
-          pvs.map(pv => pv.name),
-          timestamp,  // Pass timestamp as seconds, not Date object
-          { 
-            fetch_latest_metadata: true,
-            operator: processingMode()
-          }
-        );
-  
-        // Add more detailed logging
-        addDebugLog('Received latest data', 'debug', {
-          dataPoints: Object.keys(latestData).length,
-          pvs: Object.keys(latestData),
-          firstValue: Object.values(latestData)[0]
-        });
-  
-        setData(prev => {
-          const newData = [...prev];
-          Object.entries(latestData).forEach(([pvName, point]) => {
-            const pvIndex = newData.findIndex(d => d.meta.name === pvName);
-            if (pvIndex >= 0) {
-              const value = typeof point.val === 'number' ? point.val : 
-                           Array.isArray(point.val) ? point.val[0] : 
-                           NaN;
-              
-              if (!isNaN(value)) {
-                newData[pvIndex].data.push({
-                  timestamp: timestamp * 1000, // Convert back to milliseconds for display
-                  severity: point.severity || 0,
-                  status: point.status || 0,
-                  value,
-                  min: value,
-                  max: value,
-                  stddev: 0,
-                  count: 1
-                });
+      if (pvs.length === 0) return;
+
+      const latestData = await fetchLiveData(pvs.map((pv) => pv.name));
+
+      setData((prev) => {
+        const newData = [...prev];
+        let hasUpdates = false;
+
+        Object.entries(latestData).forEach(([pvName, point]) => {
+          const pvIndex = newData.findIndex((d) => d.meta.name === pvName);
+          if (pvIndex >= 0) {
+            const value =
+              typeof point.val === "number"
+                ? point.val
+                : Array.isArray(point.val)
+                  ? point.val[0]
+                  : NaN;
+
+            if (!isNaN(value)) {
+              const newPoint = {
+                timestamp: point.secs * 1000 + (point.nanos || 0) / 1_000_000,
+                severity: point.severity || 0,
+                status: point.status || 0,
+                value,
+                min: value,
+                max: value,
+                stddev: 0,
+                count: 1,
+              };
+
+              const existingPoint = newData[pvIndex].data.find(
+                (p) => p.timestamp === newPoint.timestamp
+              );
+
+              if (!existingPoint) {
+                newData[pvIndex].data.push(newPoint);
+                hasUpdates = true;
+
                 // Maintain buffer size
-                if (newData[pvIndex].data.length > realTimeMode().bufferSize) {
-                  newData[pvIndex].data = newData[pvIndex].data.slice(-realTimeMode().bufferSize);
+                if (
+                  newData[pvIndex].data.length > realTimeConfig().bufferSize
+                ) {
+                  newData[pvIndex].data = newData[pvIndex].data.slice(
+                    -realTimeConfig().bufferSize
+                  );
                 }
               }
             }
-          });
-          return newData;
+          }
         });
-  
-        setRealTimeMode(prev => ({ ...prev, lastTimestamp: timestamp }));
-        setLastRefresh(currentTime);
-  
-      } else {
-        // Rest of the binned data logic remains the same
-      }
-  
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError(errorMessage);
-      addDebugLog('Real-time update failed', 'error', { 
-        error: errorMessage,
-        timestamp: new Date().toISOString()
+
+        return hasUpdates ? newData : prev;
       });
-    }
-  };
 
-  // Data Fetching Logic
-  const fetchData = async () => {
-    try {
-      const pvs = selectedPVs();
-      if (pvs.length === 0) {
-        throw new Error("No PVs selected");
-      }
-
-      const range = timeRange();
-      if (!range.start || !range.end) {
-        throw new Error("Invalid time range");
-      }
-
-      const options: ExtendedFetchOptions = {
-        ...currentOptions(),
-        chart_width: chartContainer?.clientWidth || 1000,
-        operator: processingMode(),
-      };
-
-      const responseData = await fetchBinnedData(
-        pvs.map((pv) => pv.name),
-        range.start,
-        range.end,
-        options
-      );
-
-      if (Array.isArray(responseData) && responseData.length > 0) {
-        const dataWithProps = responseData.map((data, index) => ({
-          ...data,
-          pen: pvs[index].pen,
-        }));
-
-        setData(dataWithProps);
-        setError(null);
-        setLastRefresh(new Date());
-
-        addDebugLog("Data fetched successfully", "debug", {
-          timestamp: new Date().toISOString(),
-          pointCount: dataWithProps.reduce(
-            (sum, pv) => sum + pv.data.length,
-            0
-          ),
-          timeRange: {
-            start: range.start.toISOString(),
-            end: range.end.toISOString(),
-          },
-        });
-      } else {
-        throw new Error("No data received");
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      setLastRefresh(new Date());
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       setError(errorMessage);
-      addDebugLog(errorMessage, "error", { error: err });
+      addDebugLog("Real-time update failed", "error", { error: errorMessage });
     }
   };
 
   // Event Handlers
   const handleRefresh = async () => {
     setLoading(true);
-    await fetchData();
+    await fetchDataForPVs();
     setLoading(false);
   };
 
   const handleTimeRangeChange = (
     start: Date,
     end: Date,
-    options: ExtendedFetchOptions
+    newTimezone: string
   ) => {
     setTimeRange({ start, end });
-    setCurrentOptions(options);
+    setTimezone(newTimezone);
     handleRefresh();
   };
-
   const handleAddPV = (pv: string, properties: PenProperties) => {
     setSelectedPVs((prev) => [...prev, { name: pv, pen: properties }]);
     setVisiblePVs((prev) => new Set(prev).add(pv));
@@ -384,256 +285,184 @@ export default function ArchiveViewer() {
     handleRefresh();
   };
 
-  const handleRealTimeToggle = () => {
-    setRealTimeMode((prev) => {
-      const newMode = {
-        ...prev,
-        enabled: !prev.enabled,
-        lastTimestamp: Date.now(),
-      };
+  
 
-      if (newMode.enabled) {
-        // When enabling real-time, update time range end to now
+  const handleRealTimeToggle = () => {
+    setRealTimeConfig((prev) => {
+      const enabled = !prev.enabled;
+      if (enabled) {
+        // When enabling real-time, update the end time to now
         setTimeRange((prev) => ({
           ...prev,
           end: new Date(),
         }));
       }
-
-      addDebugLog(
-        `Real-time mode ${newMode.enabled ? "enabled" : "disabled"}`,
-        "info",
-        {
-          operator: processingMode(),
-          updateInterval: newMode.updateInterval,
-        }
-      );
-
-      return newMode;
+      return { ...prev, enabled };
     });
   };
 
+  
+
   // Effects
   createEffect(() => {
-    let interval: number | undefined;
+    let intervalId: number | undefined;
 
-    if (realTimeMode().enabled) {
-      // Initial update when enabling real-time
+    if (realTimeConfig().enabled) {
+      // Initial update
       updateRealTimeData();
 
-      // Set up interval for subsequent updates
-      interval = window.setInterval(() => {
-        updateRealTimeData();
-
-        // Also update the visible time range
+      // Set up interval for updates
+      intervalId = window.setInterval(() => {
         setTimeRange((prev) => ({
           ...prev,
           end: new Date(),
         }));
-      }, realTimeMode().updateInterval);
+        updateRealTimeData();
+      }, realTimeConfig().updateInterval);
 
       addDebugLog("Real-time updates started", "info", {
-        interval: realTimeMode().updateInterval,
-        operator: processingMode(),
+        interval: realTimeConfig().updateInterval,
       });
     }
 
     onCleanup(() => {
-      if (interval) {
-        clearInterval(interval);
+      if (intervalId) {
+        clearInterval(intervalId);
         addDebugLog("Real-time updates stopped", "info");
       }
     });
   });
 
-  // Effect to automatically adjust update interval based on processing mode
-  createEffect(() => {
-    const mode = processingMode();
-    if (realTimeMode().enabled && mode !== "raw") {
-      const binSize = extractBinSize(mode);
-      setRealTimeMode((prev) => ({
-        ...prev,
-        updateInterval: Math.max(binSize * 1000, 1000), // Minimum 1 second interval
-      }));
-
-      addDebugLog("Adjusted real-time update interval", "debug", {
-        mode,
-        newInterval: Math.max(binSize * 1000, 1000),
-      });
-    }
-  });
-
-  // Effect to handle processing mode changes
-  createEffect(() => {
-    const mode = processingMode();
-    addDebugLog("Processing mode changed", "debug", {
-      mode,
-      realTimeEnabled: realTimeMode().enabled,
-    });
-
-    if (realTimeMode().enabled) {
-      // Force a refresh when changing modes in real-time
-      handleRefresh();
-    }
-  });
-
   return (
-    <div class="p-4">
-      <div class="grid grid-cols-[350px_auto_350px] gap-4">
-        {/* Left Side - PV Selector */}
-        <div class="bg-white rounded-lg shadow-md p-4">
-          <div class="flex justify-between items-center mb-2">
-            <h2 class="text-lg font-semibold">Process Variables</h2>
-            <span class="text-sm text-gray-500">
-              {selectedPVs().length} PVs selected
-            </span>
+    <div class="p-4 bg-gray-50 min-h-screen">
+      <div class="grid grid-cols-[300px_1fr_300px] gap-4">
+        {/* Left Panel - PV Selection */}
+        <div class="space-y-4">
+          <div class="bg-white rounded-lg shadow-sm p-4">
+            <div class="flex justify-between items-center mb-4">
+              <h2 class="text-lg font-semibold">Variables</h2>
+              <span class="text-sm text-gray-500">
+                {selectedPVs().length} selected
+              </span>
+            </div>
+            <PVSelector
+              selectedPVs={selectedPVs}
+              visiblePVs={visiblePVs}
+              onAddPV={handleAddPV}
+              onUpdatePV={handleUpdatePV}
+              onRemovePV={handleRemovePV}
+              onVisibilityChange={(pv, visible) => {
+                setVisiblePVs((prev) => {
+                  const newSet = new Set(prev);
+                  if (visible) {
+                    newSet.add(pv);
+                  } else {
+                    newSet.delete(pv);
+                  }
+                  return newSet;
+                });
+              }}
+            />
           </div>
-          <PVSelector
-            selectedPVs={selectedPVs}
-            visiblePVs={visiblePVs}
-            onAddPV={handleAddPV}
-            onUpdatePV={handleUpdatePV}
-            onRemovePV={handleRemovePV}
-            onVisibilityChange={handlePVVisibilityToggle}
-          />
         </div>
 
-        {/* Middle Section - Controls and Chart */}
+        {/* Center Panel - Chart and Controls */}
         <div class="space-y-4">
-          {/* Control Buttons */}
-          <div class="bg-white rounded-lg shadow-md p-4">
-            <div class="flex flex-col gap-4">
-              {/* Processing Mode and Controls Row */}
+          {/* Control Bar */}
+          <div class="bg-white rounded-lg shadow-sm p-4">
+            <div class="flex items-center justify-between">
+              {/* Chart Type Selection */}
               <div class="flex gap-4 items-center">
-                {/* Processing Mode Selector */}
-                <div class="w-64">
-                  <label class="block mb-2 text-sm font-medium text-gray-700">
-                    Display Mode
-                  </label>
-                  <select
-                    value={processingMode()}
-                    onChange={(e) => {
-                      setProcessingMode(
-                        (e.target as HTMLSelectElement).value as ProcessingMode
-                      );
-                      handleRefresh();
-                    }}
-                    class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    disabled={loading()}
-                  >
-                    <For each={DISPLAY_MODES}>
-                      {(mode) => (
-                        <option value={mode.value}>{mode.label}</option>
-                      )}
-                    </For>
-                  </select>
-                </div>
-
-                {/* Control Buttons */}
-                <div class="flex gap-2 items-center ml-auto">
-                  {/* Real-time Toggle Button */}
-                  <button
-                    onClick={handleRealTimeToggle}
-                    disabled={loading()}
-                    class={`px-4 py-1.5 rounded text-white transition-colors ${
-                      realTimeMode().enabled
-                        ? "bg-red-500 hover:bg-red-600"
-                        : "bg-green-500 hover:bg-green-600"
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
-                  >
-                    <div class="flex items-center gap-2">
-                      {realTimeMode().enabled ? (
-                        <>
-                          <div class="w-2 h-2 rounded-full bg-white animate-pulse" />
-                          <span>Live</span>
-                        </>
-                      ) : (
-                        <span>Go Live</span>
-                      )}
-                    </div>
-                  </button>
-
-                  {/* Manual Refresh Button */}
-                  <button
-                    onClick={handleRefresh}
-                    disabled={loading() || realTimeMode().enabled}
-                    title={`Total points: ${totalPoints().toLocaleString()}`}
-                    class="px-4 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 
-                           disabled:opacity-50 disabled:cursor-not-allowed 
-                           transition-colors flex items-center justify-center gap-2"
-                  >
-                    {loading() ? (
-                      <>
-                        <div class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
-                        <span>Fetching...</span>
-                      </>
-                    ) : (
-                      <div class="flex items-center gap-2">
-                        <span>Fetch Data</span>
-                        <span class="text-xs bg-blue-600 px-2 py-0.5 rounded">
-                          {totalPoints().toLocaleString()} pts
-                        </span>
-                      </div>
-                    )}
-                  </button>
-
-                  <button
-                    onClick={() => setShowDebugData(true)}
-                    class="px-4 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
-                    disabled={loading()}
-                  >
-                    View Raw Data
-                  </button>
-                </div>
+                <button
+                  class={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                    selectedChart() === "chartjs"
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-gray-600 hover:bg-gray-50"
+                  }`}
+                  onClick={() => setSelectedChart("chartjs")}
+                >
+                  Chart.js
+                </button>
+                <button
+                  class={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                    selectedChart() === "uplot"
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-gray-600 hover:bg-gray-50"
+                  }`}
+                  onClick={() => setSelectedChart("uplot")}
+                >
+                  µPlot
+                </button>
               </div>
 
-              {/* Last Update Indicator */}
-              {lastRefresh() && (
-                <div class="text-xs text-gray-500">
-                  Last updated: {lastRefresh()?.toLocaleTimeString()}
-                </div>
-              )}
+              {/* Action Buttons */}
+              <div class="flex items-center gap-2">
+                {/* Real-time Toggle */}
+                <button
+                  onClick={handleRealTimeToggle}
+                  disabled={loading()}
+                  class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium 
+                    ${
+                      realTimeConfig().enabled
+                        ? "bg-red-100 text-red-700 hover:bg-red-200"
+                        : "bg-green-100 text-green-700 hover:bg-green-200"
+                    } disabled:opacity-50 disabled:cursor-not-allowed transition-colors`}
+                >
+                  {realTimeConfig().enabled ? (
+                    <>
+                      <div class="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                      <span>Live</span>
+                    </>
+                  ) : (
+                    <span>Go Live</span>
+                  )}
+                </button>
+
+                {/* Refresh Button */}
+                <button
+                  onClick={handleRefresh}
+                  disabled={loading() || realTimeConfig().enabled}
+                  class="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 
+                         rounded-md text-sm font-medium hover:bg-blue-100 
+                         disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {loading() ? (
+                    <>
+                      <div class="w-4 h-4 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />
+                      <span>Loading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Refresh</span>
+                      <span class="text-xs bg-blue-100 px-2 py-0.5 rounded-full">
+                        {totalPoints().toLocaleString()}
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Status Bar */}
+            <div class="mt-4 pt-4 border-t flex items-center justify-between text-sm text-gray-500">
+              <div>
+                {lastRefresh() && (
+                  <span>
+                    Last updated: {lastRefresh()?.toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
+              <div>
+                {error() && <span class="text-red-600">Error: {error()}</span>}
+              </div>
             </div>
           </div>
 
-          {/* Chart */}
-          <div class="bg-white rounded-lg shadow-md p-4">
-            {/* Chart Type Selector */}
-            <div class="flex items-center gap-2 mb-4 border-b">
-              <button
-                class={`px-4 py-2 text-sm font-medium transition-colors relative ${
-                  selectedChart() === "chartjs"
-                    ? "text-blue-600 border-b-2 border-blue-600 -mb-px"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
-                onClick={() => setSelectedChart("chartjs")}
-              >
-                Chart.js
-              </button>
-              <button
-                class={`px-4 py-2 text-sm font-medium transition-colors relative ${
-                  selectedChart() === "uplot"
-                    ? "text-blue-600 border-b-2 border-blue-600 -mb-px"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
-                onClick={() => setSelectedChart("uplot")}
-              >
-                µPlot
-              </button>
-            </div>
-
-            {/* Error Display */}
-            {error() && (
-              <div class="mb-4 p-4 bg-red-100 text-red-700 rounded border border-red-200">
-                <div class="font-semibold">Error</div>
-                <div class="text-sm">{error()}</div>
-              </div>
-            )}
-
-            {/* Chart Container */}
+          {/* Chart Area */}
+          <div class="bg-white rounded-lg shadow-sm p-4">
             <div
               ref={chartContainer}
-              class="w-full mx-auto h-[calc(100vh-290px)] relative overflow-hidden"
+              class="w-full h-[calc(100vh-280px)] relative"
             >
               {data().length > 0 ? (
                 <Show
@@ -647,7 +476,7 @@ export default function ArchiveViewer() {
                         pen: pv.pen,
                       }))}
                       timeRange={timeRange()}
-                      timezone={currentOptions().timezone || "UTC"}
+                      timezone="UTC"
                     />
                   }
                 >
@@ -659,7 +488,7 @@ export default function ArchiveViewer() {
                       pen: pv.pen,
                     }))}
                     timeRange={timeRange()}
-                    timezone={currentOptions().timezone || "UTC"}
+                    timezone="UTC"
                   />
                 </Show>
               ) : (
@@ -671,30 +500,31 @@ export default function ArchiveViewer() {
           </div>
         </div>
 
-        {/* Right Side - Time Range */}
-        <div class="bg-white rounded-lg shadow-md p-4">
-          <div class="flex justify-between items-center mb-2">
+        {/* Right Panel - Time Range */}
+        <div class="bg-white rounded-lg shadow-sm p-4">
+          <div class="flex justify-between items-center mb-4">
             <h2 class="text-lg font-semibold">Time Range</h2>
-            {currentOptions().operator && (
-              <span class="text-sm text-gray-500">
-                Using {currentOptions().operator} operator
-              </span>
-            )}
+            <span class="text-sm text-gray-500">
+              {realTimeConfig().enabled ? "Live Mode" : "Historical"}
+            </span>
           </div>
           <TimeRangeSelector
             onChange={handleTimeRangeChange}
-            disabled={loading() || realTimeMode().enabled}
+            disabled={loading() || realTimeConfig().enabled}
+            initialTimezone={timezone()} // Changed from timezone to initialTimezone
           />
         </div>
       </div>
 
-      {showDebugData() && (
-        <DebugDialog
-          isOpen={showDebugData()}
-          onClose={() => setShowDebugData(false)}
-          data={visibleData()}
-        />
-      )}
+      {/* Debug Dialog */}
+      <Show when={showDebugData()}>
+      <DebugDialog
+        isOpen={true}
+        onClose={() => setShowDebugData(false)}
+        data={debugLogs()}  // Ensure this passes the actual logs
+      />
+      </Show>
+
     </div>
   );
 }

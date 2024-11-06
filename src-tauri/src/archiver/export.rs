@@ -1,15 +1,15 @@
 // export.rs
 
 use crate::archiver::types::*;
+use chrono::{DateTime, TimeZone, Utc};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::Write;
-use serde::Serialize;
-use chrono::{DateTime, TimeZone, Utc};
 
 /// Exports data to CSV format
 pub fn export_to_csv(data: &[NormalizedPVData]) -> Result<String, String> {
     let mut wtr = csv::Writer::from_writer(vec![]);
-    
+
     // Write header
     wtr.write_record(&[
         "timestamp",
@@ -21,16 +21,17 @@ pub fn export_to_csv(data: &[NormalizedPVData]) -> Result<String, String> {
         "min",
         "max",
         "stddev",
-        "count"
-    ]).map_err(|e| format!("Failed to write CSV header: {}", e))?;
+        "count",
+    ])
+    .map_err(|e| format!("Failed to write CSV header: {}", e))?;
 
     // Write data for each PV
     for pv_data in data {
         let units = &pv_data.meta.egu;
-        
+
         for point in &pv_data.data {
             let timestamp = format_timestamp(point.timestamp);
-            
+
             wtr.write_record(&[
                 timestamp,
                 pv_data.meta.name.clone(),
@@ -42,7 +43,8 @@ pub fn export_to_csv(data: &[NormalizedPVData]) -> Result<String, String> {
                 point.max.to_string(),
                 point.stddev.to_string(),
                 point.count.to_string(),
-            ]).map_err(|e| format!("Failed to write CSV record: {}", e))?;
+            ])
+            .map_err(|e| format!("Failed to write CSV record: {}", e))?;
         }
     }
 
@@ -64,16 +66,19 @@ pub fn export_to_matlab(data: &[NormalizedPVData]) -> Result<String, String> {
     let mut matlab_data = Vec::new();
 
     for pv_data in data {
-        let timestamps: Vec<f64> = pv_data.data.iter()
-            .map(|p| p.timestamp as f64 / 1000.0)  // Convert to seconds
-            .collect();
-        
-        let values: Vec<f64> = pv_data.data.iter()
-            .map(|p| p.value)
+        let timestamps: Vec<f64> = pv_data
+            .data
+            .iter()
+            .map(|p| p.timestamp as f64 / 1000.0) // Convert to seconds
             .collect();
 
+        let values: Vec<f64> = pv_data.data.iter().map(|p| p.value).collect();
+
         let mut metadata = HashMap::new();
-        metadata.insert("description", pv_data.meta.description.clone().unwrap_or_default());
+        metadata.insert(
+            "description",
+            pv_data.meta.description.clone().unwrap_or_default(),
+        );
         if let Some(prec) = pv_data.meta.precision {
             metadata.insert("precision", prec.to_string());
         }
@@ -100,7 +105,7 @@ pub fn export_to_text(data: &[NormalizedPVData]) -> Result<String, String> {
             .map_err(|e| format!("Failed to write text: {}", e))?;
         writeln!(output, "Units: {}", pv_data.meta.egu)
             .map_err(|e| format!("Failed to write text: {}", e))?;
-        
+
         if let Some(desc) = &pv_data.meta.description {
             writeln!(output, "Description: {}", desc)
                 .map_err(|e| format!("Failed to write text: {}", e))?;
@@ -117,7 +122,8 @@ pub fn export_to_text(data: &[NormalizedPVData]) -> Result<String, String> {
                 point.value,
                 point.severity,
                 point.status
-            ).map_err(|e| format!("Failed to write text: {}", e))?;
+            )
+            .map_err(|e| format!("Failed to write text: {}", e))?;
         }
 
         if let Some(stats) = &pv_data.statistics {
@@ -135,8 +141,7 @@ pub fn export_to_text(data: &[NormalizedPVData]) -> Result<String, String> {
                 .map_err(|e| format!("Failed to write text: {}", e))?;
         }
 
-        writeln!(output, "\n")
-            .map_err(|e| format!("Failed to write text: {}", e))?;
+        writeln!(output, "\n").map_err(|e| format!("Failed to write text: {}", e))?;
     }
 
     Ok(output)
@@ -156,13 +161,15 @@ pub fn export_to_svg(data: &[NormalizedPVData]) -> Result<String, String> {
         WIDTH, HEIGHT
     ));
 
-    svg.push_str(r#"
+    svg.push_str(
+        r#"
         <style>
             .axis { stroke: #333; stroke-width: 1; }
             .data { fill: none; stroke-width: 1.5; }
             .label { font-family: Arial; font-size: 12px; }
         </style>
-    "#);
+    "#,
+    );
 
     for (i, pv_data) in data.iter().enumerate() {
         // ... rest of SVG plotting code ...

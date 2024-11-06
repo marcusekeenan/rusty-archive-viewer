@@ -14,7 +14,11 @@
   "dependencies": {
     "@heroicons/react": "^2.1.5",
     "@kobalte/core": "^0.11.0",
+    "@solidjs/router": "^0.15.1",
     "@tauri-apps/api": "^1.5.1",
+    "chart.js": "^4.4.0",
+    "chartjs-adapter-date-fns": "^3.0.0",
+    "chartjs-plugin-zoom": "^2.0.1",
     "clsx": "^2.0.0",
     "date-fns": "^2.30.0",
     "date-fns-tz": "^2.0.0",
@@ -22,10 +26,7 @@
     "solid-js": "^1.7.8",
     "solid-transition-group": "^0.2.3",
     "tailwind-merge": "^2.0.0",
-    "uplot": "^1.6.24",
-    "chart.js": "^4.4.0",
-    "chartjs-adapter-date-fns": "^3.0.0",
-    "chartjs-plugin-zoom": "^2.0.1"
+    "uplot": "^1.6.24"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.5.6",

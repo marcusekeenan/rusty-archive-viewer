@@ -1,7 +1,5 @@
 // types.ts
-import type { Component } from "solid-js";
 import type { 
-  ExtendedFetchOptions, 
   NormalizedPVData 
 } from "../utils/archiverApi";
 
@@ -10,11 +8,13 @@ export interface TimeRange {
   end: Date;
 }
 
-export interface DebugLog {
+// In your types.ts or at the top of ArchiveViewer.tsx
+interface DebugLog {
   timestamp: string;
   message: string;
   type: "info" | "error" | "debug" | "success";
   details?: string | null;
+  source?: string;  // Added source property
 }
 
 export interface RealTimeMode {
@@ -28,8 +28,10 @@ export interface RealTimeMode {
 export interface DebugDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  data: NormalizedPVData[];
+  data: DebugLog[];  // Change to DebugLog[] here
 }
+
+
 
 export const DEBUG_LOG_LIMIT = 50;
 
