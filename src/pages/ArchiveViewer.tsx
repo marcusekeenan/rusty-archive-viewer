@@ -226,109 +226,166 @@ export default function ArchiveViewer() {
     const config = realTimeConfig();
     const newEnabled = !config.enabled;
     
-    setRealTimeConfig((prev) => ({ ...prev, enabled: newEnabled }));
+    try {
+        if (newEnabled) {
+            // Check for selected PVs
+            if (!selectedPVs().length) {
+                throw new Error("No PVs selected");
+            }
 
-    if (newEnabled) {
-        liveManager = new LiveUpdateManager();
-        try {
-            const now = new Date();
-            const duration = getTimeRangeDuration(timeRangeMode());
-            const startTime = new Date(now.getTime() - duration);
+            // Create new live manager
+            if (liveManager) {
+                await liveManager.stop();
+            }
+            liveManager = new LiveUpdateManager();
+            
+            // Set enabled state after validation
+            setRealTimeConfig((prev) => ({ ...prev, enabled: true }));
+            
+            // Preserve the current time range duration
+            const currentRange = timeRange();
+            const duration = currentRange.end.getTime() - currentRange.start.getTime();
             
             addDebugLog("Starting live mode", "info", {
-                mode: timeRangeMode(),
-                start: startTime.toISOString(),
-                end: now.toISOString(),
-                interval: config.updateInterval
-            });
-            
-            setTimeRange({
-                start: startTime,
-                end: now
+                currentRange: {
+                    start: currentRange.start.toISOString(),
+                    end: currentRange.end.toISOString(),
+                },
+                duration,
+                interval: config.updateInterval,
+                selectedPVs: selectedPVs().map(pv => pv.name)
             });
 
-            // First fetch to populate initial data
-            await handleRefresh();
+            // Initial data fetch for all PVs
+            const initialData = await fetchData(
+                selectedPVs().map(pv => pv.name),
+                currentRange.start,
+                currentRange.end,
+                chartWidth(),
+                timezone()
+            );
 
+            if (!initialData || !Array.isArray(initialData) || initialData.length === 0) {
+                throw new Error("Failed to fetch initial data");
+            }
+
+            // Set initial data with PV properties
+            setData(initialData.map((pvData, index) => ({
+                ...pvData,
+                pen: selectedPVs()[index].pen
+            })));
+
+            // Start live updates
             await liveManager.start({
                 pvs: selectedPVs().map(pv => pv.name),
                 updateIntervalMs: config.updateInterval,
                 timezone: timezone(),
                 onData: (pointValues) => {
+                    if (!Object.keys(pointValues).length) {
+                        addDebugLog("Received empty point values", "debug");
+                        return;
+                    }
+
                     addDebugLog("Received live data update", "debug", {
                         timestamp: new Date().toISOString(),
-                        points: pointValues
+                        points: Object.keys(pointValues)
                     });
 
                     setData((prev) => {
+                        if (!prev || !prev.length) {
+                            addDebugLog("No previous data to update", "error");
+                            return prev;
+                        }
+
+                        // Create deep copy of previous data
                         const newData = [...prev];
                         let hasUpdates = false;
 
+                        // Update each PV that received new data
                         Object.entries(pointValues).forEach(([pvName, point]) => {
-                          const pvIndex = newData.findIndex((d) => d.meta.name === pvName);
-                          if (pvIndex >= 0) {
-                              const value = typeof point.val === "number" 
-                                  ? point.val 
-                                  : Array.isArray(point.val) 
-                                      ? point.val[0] 
-                                      : NaN;
+                            // Find the PV in our data array
+                            const pvData = newData.find(d => d.meta.name === pvName);
+                            if (!pvData) {
+                                addDebugLog(`PV ${pvName} not found in current data`, "error");
+                                return;
+                            }
 
-                              if (!isNaN(value)) {
-                                  const timestamp = point.secs * 1000;
-                                  
-                                  addDebugLog("Processing live point", "debug", {
-                                      pv: pvName,
-                                      timestamp: new Date(timestamp).toISOString(),
-                                      value: value
-                                  });
+                            const value = typeof point.val === "number" 
+                                ? point.val 
+                                : Array.isArray(point.val) 
+                                    ? point.val[0] 
+                                    : null;
 
-                                  const newPoint = {
-                                      timestamp,
-                                      severity: point.severity || 0,
-                                      status: point.status || 0,
-                                      value,
-                                      min: value,
-                                      max: value,
-                                      stddev: 0,
-                                      count: 1,
-                                  };
+                            if (value !== null) {
+                                const timestamp = point.secs * 1000;
+                                
+                                const newPoint = {
+                                    timestamp,
+                                    severity: point.severity || 0,
+                                    status: point.status || 0,
+                                    value,
+                                    min: value,
+                                    max: value,
+                                    stddev: 0,
+                                    count: 1,
+                                };
 
-                                  // Add new point
-                                  newData[pvIndex].data.push(newPoint);
-                                  hasUpdates = true;
+                                // Clone the data array for this PV
+                                pvData.data = [...pvData.data, newPoint];
+                                hasUpdates = true;
 
-                                  // Update rolling window
-                                  const now = Date.now();
-                                  const oneHourAgo = now - 3600000;
-                                  
-                                  // Filter and sort
-                                  newData[pvIndex].data = newData[pvIndex].data
-                                      .filter(point => point.timestamp >= oneHourAgo)
-                                      .sort((a, b) => a.timestamp - b.timestamp);
+                                // Maintain the rolling window
+                                const now = Date.now();
+                                const duration = timeRange().end.getTime() - timeRange().start.getTime();
+                                const windowStart = now - duration;
+                                
+                                // Filter and sort data
+                                pvData.data = pvData.data
+                                    .filter(point => point.timestamp >= windowStart)
+                                    .sort((a, b) => a.timestamp - b.timestamp);
 
-                                  addDebugLog("Updated dataset", "debug", {
-                                      pv: pvName,
-                                      pointCount: newData[pvIndex].data.length,
-                                      timeRange: {
-                                          start: new Date(oneHourAgo).toISOString(),
-                                          end: new Date(now).toISOString()
-                                      }
-                                  });
-                              }
-                          }
-                      });
+                                // Update statistics
+                                if (pvData.data.length > 0) {
+                                    const values = pvData.data.map(p => p.value);
+                                    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+                                    const stdDev = Math.sqrt(
+                                        values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length
+                                    );
+
+                                    pvData.statistics = {
+                                        mean,
+                                        std_dev: stdDev,
+                                        min: Math.min(...values),
+                                        max: Math.max(...values),
+                                        count: values.length,
+                                        first_timestamp: pvData.data[0].timestamp,
+                                        last_timestamp: pvData.data[pvData.data.length - 1].timestamp
+                                    };
+                                }
+                            }
+                        });
 
                         if (hasUpdates) {
                             const now = new Date();
-                            const duration = getTimeRangeDuration(timeRangeMode());
+                            const duration = timeRange().end.getTime() - timeRange().start.getTime();
+                            const newStart = new Date(now.getTime() - duration);
+                            
                             setTimeRange({
-                                start: new Date(now.getTime() - duration),
+                                start: newStart,
                                 end: now
                             });
                             setLastRefresh(now);
+
+                            addDebugLog("Updated data state", "debug", {
+                                pvCount: newData.length,
+                                timeRange: {
+                                    start: newStart.toISOString(),
+                                    end: now.toISOString()
+                                }
+                            });
                         }
 
-                        return hasUpdates ? newData : prev;
+                        return newData;
                     });
                 },
                 onError: (error) => {
@@ -338,16 +395,8 @@ export default function ArchiveViewer() {
                 }
             });
             
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            setError(errorMessage);
-            addDebugLog("Failed to start live updates", "error", { error: errorMessage });
-            setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
-            liveManager = undefined;
-            return;
-        }
-    } else {
-        try {
+        } else {
+            // Stopping live mode
             addDebugLog("Stopping live mode", "info");
             
             if (liveManager) {
@@ -355,23 +404,52 @@ export default function ArchiveViewer() {
                 liveManager = undefined;
             }
 
-            // Keep current time range for historical view
-            const currentEnd = new Date();
-            const duration = getTimeRangeDuration(timeRangeMode());
+            // Set disabled state after stopping
+            setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
+
+            // Preserve the current time range duration when stopping
+            const currentRange = timeRange();
+            const duration = currentRange.end.getTime() - currentRange.start.getTime();
+            const now = new Date();
+            const newStart = new Date(now.getTime() - duration);
+            
             setTimeRange({
-                start: new Date(currentEnd.getTime() - duration),
-                end: currentEnd
+                start: newStart,
+                end: now
             });
 
-            await handleRefresh();
+            // Fetch final state for all PVs
+            const finalData = await fetchData(
+                selectedPVs().map(pv => pv.name),
+                newStart,
+                now,
+                chartWidth(),
+                timezone()
+            );
+
+            if (finalData && Array.isArray(finalData) && finalData.length > 0) {
+                setData(finalData.map((pvData, index) => ({
+                    ...pvData,
+                    pen: selectedPVs()[index].pen
+                })));
+            }
             
             addDebugLog("Live updates stopped successfully", "info");
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            addDebugLog("Error stopping live updates", "error", { error: errorMessage });
+        }
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setError(errorMessage);
+        addDebugLog("Live update operation failed", "error", { 
+            error: errorMessage,
+            state: newEnabled ? "starting" : "stopping"
+        });
+        
+        // Ensure clean state on error
+        setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
+        if (liveManager) {
+            await liveManager.stop();
             liveManager = undefined;
         }
-        setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
     }
 };
 
@@ -560,8 +638,10 @@ export default function ArchiveViewer() {
           <TimeRangeSelector
             onChange={handleTimeRangeChange}
             disabled={loading() || realTimeConfig().enabled}
-            initialTimezone={timezone()} // Changed from timezone to initialTimezone
-          />
+            initialTimezone={timezone()}
+            currentStartDate={timeRange().start}
+            currentEndDate={timeRange().end}
+        />
         </div>
       </div>
 

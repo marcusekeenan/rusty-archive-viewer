@@ -2,13 +2,15 @@ import { createSignal, createEffect, For, Show } from 'solid-js';
 
 interface TimeRangeSelectorProps {
   disabled?: boolean;
-  initialTimezone?: string; // Change to initialTimezone
-  onChange?: (start: Date, end: Date, timezone: string) => void;
+  initialTimezone?: string;
+  currentStartDate?: Date;
+  currentEndDate?: Date;
+  onChange?: (start: Date, end: Date, timezone: string, mode?: string) => void;
 }
 
 const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
-  const [startDate, setStartDate] = createSignal<Date>(new Date(Date.now() - 3600000));
-  const [endDate, setEndDate] = createSignal<Date>(new Date());
+  const [startDate, setStartDate] = createSignal<Date>(props.currentStartDate || new Date(Date.now() - 3600000));
+  const [endDate, setEndDate] = createSignal<Date>(props.currentEndDate || new Date());
   const [timezone, setTimezone] = createSignal(
     props.initialTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone
   );
@@ -38,6 +40,23 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
     { value: '7d', label: 'Last Week' },
     { value: '30d', label: 'Last 30 Days' }
   ];
+
+  // Effect to update internal state when external time range changes
+  createEffect(() => {
+    if (props.currentStartDate) {
+      setStartDate(props.currentStartDate);
+    }
+    if (props.currentEndDate) {
+      setEndDate(props.currentEndDate);
+    }
+  });
+
+  // Effect to sync timezone
+  createEffect(() => {
+    if (props.initialTimezone && props.initialTimezone !== timezone()) {
+      setTimezone(props.initialTimezone);
+    }
+  });
 
   const getRelativeTimeRange = (value: string) => {
     const now = new Date();
@@ -90,10 +109,10 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
     }
   };
 
-  const updateTimeRange = (start: Date, end: Date) => {
+  const updateTimeRange = (start: Date, end: Date, mode?: string) => {
     setStartDate(start);
     setEndDate(end);
-    props.onChange?.(start, end, timezone());
+    props.onChange?.(start, end, timezone(), mode);
   };
 
   const handleRelativeRangeChange = (value: string) => {
@@ -101,16 +120,16 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
     if (value === 'custom') return;
 
     const { start, end } = getRelativeTimeRange(value);
-    updateTimeRange(start, end);
+    updateTimeRange(start, end, value);
   };
 
   const handleDateInput = (isStart: boolean, value: string) => {
     try {
       const date = new Date(value);
       if (isStart) {
-        updateTimeRange(date, endDate());
+        updateTimeRange(date, endDate(), 'custom');
       } else {
-        updateTimeRange(startDate(), date);
+        updateTimeRange(startDate(), date, 'custom');
       }
       setRelativeRange('custom');
     } catch (error) {
@@ -124,19 +143,11 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
     
     if (relativeRange() !== 'custom') {
       const { start, end } = getRelativeTimeRange(relativeRange());
-      updateTimeRange(start, end);
+      updateTimeRange(start, end, relativeRange());
     } else {
-      // If in custom mode, update with current dates
-      updateTimeRange(startDate(), endDate());
+      updateTimeRange(startDate(), endDate(), 'custom');
     }
   };
-
-  // Initialize with default range
-  createEffect(() => {
-    if (props.initialTimezone && props.initialTimezone !== timezone()) {
-      setTimezone(props.initialTimezone);
-    }
-  });
 
   return (
     <div class="flex flex-col gap-4">
