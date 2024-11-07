@@ -5,6 +5,7 @@ import {
   createEffect,
   createMemo,
   onCleanup,
+  onMount,
   Show,
   For,
 } from "solid-js";
@@ -15,9 +16,9 @@ import ChartJS from "../components/chart/ChartJS";
 import ChartuPlot from "../components/chart/ChartuPlot";
 import {
   fetchData,
-  fetchLiveData,
   type NormalizedPVData,
   type PointValue,
+  LiveUpdateManager
 } from "../utils/archiverApi";
 import type {
   PVWithProperties,
@@ -47,7 +48,7 @@ interface DebugLog {
 interface DebugDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  data: DebugLog[];  // Change to DebugLog[]
+  data: DebugLog[];
 }
 
 const DEBUG_LOG_LIMIT = 50;
@@ -56,12 +57,13 @@ const DEFAULT_BUFFER_SIZE = 3600; // 1 hour of data points
 
 export default function ArchiveViewer() {
   let chartContainer: HTMLDivElement | undefined;
+  let liveManager: LiveUpdateManager | undefined;
 
   // State Management
   const [selectedPVs, setSelectedPVs] = createSignal<PVWithProperties[]>([]);
   const [visiblePVs, setVisiblePVs] = createSignal<Set<string>>(new Set());
   const [timeRange, setTimeRange] = createSignal<TimeRange>({
-    start: new Date(Date.now() - 3600000), // Last hour by default
+    start: new Date(Date.now() - 3600000),
     end: new Date(),
   });
   const [data, setData] = createSignal<NormalizedPVData[]>([]);
@@ -70,9 +72,7 @@ export default function ArchiveViewer() {
   const [debugLogs, setDebugLogs] = createSignal<DebugLog[]>([]);
   const [showDebugData, setShowDebugData] = createSignal<boolean>(false);
   const [lastRefresh, setLastRefresh] = createSignal<Date | null>(null);
-  const [selectedChart, setSelectedChart] = createSignal<"chartjs" | "uplot">(
-    "chartjs"
-  );
+  const [selectedChart, setSelectedChart] = createSignal<"chartjs" | "uplot">("chartjs");
   const [realTimeConfig, setRealTimeConfig] = createSignal<RealTimeConfig>({
     enabled: false,
     bufferSize: DEFAULT_BUFFER_SIZE,
@@ -81,11 +81,10 @@ export default function ArchiveViewer() {
   const [timezone, setTimezone] = createSignal(
     Intl.DateTimeFormat().resolvedOptions().timeZone
   );
+  const [timeRangeMode, setTimeRangeMode] = createSignal<"15min" | "hour" | "day" | "week" | "custom">("hour");
 
   // Computed values
-  const chartWidth = createMemo(
-    () => chartContainer?.clientWidth || window.innerWidth
-  );
+  const chartWidth = createMemo(() => chartContainer?.clientWidth || window.innerWidth);
   const visibleData = createMemo(() => {
     const allData = data();
     const visiblePVNames = visiblePVs();
@@ -96,150 +95,88 @@ export default function ArchiveViewer() {
     return visibleData().reduce((sum, pv) => sum + (pv.data?.length || 0), 0);
   });
 
-  // Debug Logging
-const addDebugLog = async (
-  message: string,
-  type: DebugLog["type"] = "info",
-  details: unknown = null
-) => {
-  const log: DebugLog = {
-    timestamp: new Date().toISOString(),
-    message,
-    type,
-    details: details ? JSON.stringify(details, null, 2) : null,
-  };
-
-  // Log to console for development
-  if (type === "error") console.error(message, details);
-  if (type === "debug") console.debug(message, details);
-
-  try {
-    await emit('debug-log', log);
-  } catch (error) {
-    console.debug('Failed to emit debug log:', error);
-  }
+  const getTimeRangeDuration = (mode: string): number => {
+    switch (mode) {
+        case "15min": return 15 * 60 * 1000;
+        case "hour": return 3600 * 1000;
+        case "day": return 24 * 3600 * 1000;
+        case "week": return 7 * 24 * 3600 * 1000;
+        default: return 3600 * 1000; // default to 1 hour
+    }
 };
+
+  // Debug Logging
+  const addDebugLog = async (
+    message: string,
+    type: DebugLog["type"] = "info",
+    details: unknown = null
+  ) => {
+    const log: DebugLog = {
+      timestamp: new Date().toISOString(),
+      message,
+      type,
+      details: details ? JSON.stringify(details, null, 2) : null,
+    };
+
+    if (type === "error") console.error(message, details);
+    if (type === "debug") console.debug(message, details);
+
+    try {
+      await emit('debug-log', log);
+    } catch (error) {
+      console.debug('Failed to emit debug log:', error);
+    }
+  };
 
   // Data Fetching Logic
   const fetchDataForPVs = async () => {
     console.log("the timezone is", timezone())
     try {
-        const pvs = selectedPVs();
-        if (pvs.length === 0) {
-            throw new Error("No PVs selected");
-        }
-
-        const range = timeRange();
-        if (!range.start || !range.end) {
-            throw new Error("Invalid time range");
-        }
-
-        const width = chartWidth();
-        const responseData = await fetchData(
-            pvs.map((pv) => pv.name),
-            range.start,
-            range.end,
-            width,  // This will be converted to snake_case in the API layer
-            timezone()
-        );
-        if (Array.isArray(responseData) && responseData.length > 0) {
-            const dataWithProps = responseData.map((data, index) => ({
-                ...data,
-                pen: pvs[index].pen,
-            }));
-
-            setData(dataWithProps);
-            setError(null);
-            setLastRefresh(new Date());
-
-            addDebugLog("Data fetched successfully", "debug", {
-                timestamp: new Date().toISOString(),
-                pointCount: dataWithProps.reduce(
-                    (sum, pv) => sum + pv.data.length,
-                    0
-                ),
-                timeRange: {
-                    start: range.start.toISOString(),
-                    end: range.end.toISOString(),
-                },
-                timezone: timezone(),
-            });
-        } else {
-            throw new Error("No data received");
-        }
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        setError(errorMessage);
-        addDebugLog(errorMessage, "error", { error: err });
-    }
-};
-
-  // Real-time update logic
-  const updateRealTimeData = async () => {
-    if (!realTimeConfig().enabled) return;
-
-    try {
       const pvs = selectedPVs();
-      if (pvs.length === 0) return;
+      if (pvs.length === 0) {
+        throw new Error("No PVs selected");
+      }
 
-      const latestData = await fetchLiveData(pvs.map((pv) => pv.name));
+      const range = timeRange();
+      if (!range.start || !range.end) {
+        throw new Error("Invalid time range");
+      }
 
-      setData((prev) => {
-        const newData = [...prev];
-        let hasUpdates = false;
+      const width = chartWidth();
+      const responseData = await fetchData(
+        pvs.map((pv) => pv.name),
+        range.start,
+        range.end,
+        width,
+        timezone()
+      );
 
-        Object.entries(latestData).forEach(([pvName, point]) => {
-          const pvIndex = newData.findIndex((d) => d.meta.name === pvName);
-          if (pvIndex >= 0) {
-            const value =
-              typeof point.val === "number"
-                ? point.val
-                : Array.isArray(point.val)
-                  ? point.val[0]
-                  : NaN;
+      if (Array.isArray(responseData) && responseData.length > 0) {
+        const dataWithProps = responseData.map((data, index) => ({
+          ...data,
+          pen: pvs[index].pen,
+        }));
 
-            if (!isNaN(value)) {
-              const newPoint = {
-                timestamp: point.secs * 1000 + (point.nanos || 0) / 1_000_000,
-                severity: point.severity || 0,
-                status: point.status || 0,
-                value,
-                min: value,
-                max: value,
-                stddev: 0,
-                count: 1,
-              };
+        setData(dataWithProps);
+        setError(null);
+        setLastRefresh(new Date());
 
-              const existingPoint = newData[pvIndex].data.find(
-                (p) => p.timestamp === newPoint.timestamp
-              );
-
-              if (!existingPoint) {
-                newData[pvIndex].data.push(newPoint);
-                hasUpdates = true;
-
-                // Maintain buffer size
-                if (
-                  newData[pvIndex].data.length > realTimeConfig().bufferSize
-                ) {
-                  newData[pvIndex].data = newData[pvIndex].data.slice(
-                    -realTimeConfig().bufferSize
-                  );
-                }
-              }
-            }
-          }
+        addDebugLog("Data fetched successfully", "debug", {
+          timestamp: new Date().toISOString(),
+          pointCount: dataWithProps.reduce((sum, pv) => sum + pv.data.length, 0),
+          timeRange: {
+            start: range.start.toISOString(),
+            end: range.end.toISOString(),
+          },
+          timezone: timezone(),
         });
-
-        return hasUpdates ? newData : prev;
-      });
-
-      setLastRefresh(new Date());
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      } else {
+        throw new Error("No data received");
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       setError(errorMessage);
-      addDebugLog("Real-time update failed", "error", { error: errorMessage });
+      addDebugLog(errorMessage, "error", { error: err });
     }
   };
 
@@ -250,15 +187,15 @@ const addDebugLog = async (
     setLoading(false);
   };
 
-  const handleTimeRangeChange = (
-    start: Date,
-    end: Date,
-    newTimezone: string
-  ) => {
+  const handleTimeRangeChange = (start: Date, end: Date, newTimezone: string, mode?: string) => {
+    if (mode) {
+        setTimeRangeMode(mode as "15min" | "hour" | "day" | "week" | "custom");
+    }
     setTimeRange({ start, end });
     setTimezone(newTimezone);
     handleRefresh();
-  };
+};
+
   const handleAddPV = (pv: string, properties: PenProperties) => {
     setSelectedPVs((prev) => [...prev, { name: pv, pen: properties }]);
     setVisiblePVs((prev) => new Set(prev).add(pv));
@@ -285,52 +222,164 @@ const addDebugLog = async (
     handleRefresh();
   };
 
-  
+  const handleRealTimeToggle = async () => {
+    const config = realTimeConfig();
+    const newEnabled = !config.enabled;
+    
+    setRealTimeConfig((prev) => ({ ...prev, enabled: newEnabled }));
 
-  const handleRealTimeToggle = () => {
-    setRealTimeConfig((prev) => {
-      const enabled = !prev.enabled;
-      if (enabled) {
-        // When enabling real-time, update the end time to now
-        setTimeRange((prev) => ({
-          ...prev,
-          end: new Date(),
-        }));
-      }
-      return { ...prev, enabled };
-    });
-  };
+    if (newEnabled) {
+        liveManager = new LiveUpdateManager();
+        try {
+            const now = new Date();
+            const duration = getTimeRangeDuration(timeRangeMode());
+            const startTime = new Date(now.getTime() - duration);
+            
+            addDebugLog("Starting live mode", "info", {
+                mode: timeRangeMode(),
+                start: startTime.toISOString(),
+                end: now.toISOString(),
+                interval: config.updateInterval
+            });
+            
+            setTimeRange({
+                start: startTime,
+                end: now
+            });
 
-  
+            // First fetch to populate initial data
+            await handleRefresh();
 
-  // Effects
-  createEffect(() => {
-    let intervalId: number | undefined;
+            await liveManager.start({
+                pvs: selectedPVs().map(pv => pv.name),
+                updateIntervalMs: config.updateInterval,
+                timezone: timezone(),
+                onData: (pointValues) => {
+                    addDebugLog("Received live data update", "debug", {
+                        timestamp: new Date().toISOString(),
+                        points: pointValues
+                    });
 
-    if (realTimeConfig().enabled) {
-      // Initial update
-      updateRealTimeData();
+                    setData((prev) => {
+                        const newData = [...prev];
+                        let hasUpdates = false;
 
-      // Set up interval for updates
-      intervalId = window.setInterval(() => {
-        setTimeRange((prev) => ({
-          ...prev,
-          end: new Date(),
-        }));
-        updateRealTimeData();
-      }, realTimeConfig().updateInterval);
+                        Object.entries(pointValues).forEach(([pvName, point]) => {
+                          const pvIndex = newData.findIndex((d) => d.meta.name === pvName);
+                          if (pvIndex >= 0) {
+                              const value = typeof point.val === "number" 
+                                  ? point.val 
+                                  : Array.isArray(point.val) 
+                                      ? point.val[0] 
+                                      : NaN;
 
-      addDebugLog("Real-time updates started", "info", {
-        interval: realTimeConfig().updateInterval,
-      });
+                              if (!isNaN(value)) {
+                                  const timestamp = point.secs * 1000;
+                                  
+                                  addDebugLog("Processing live point", "debug", {
+                                      pv: pvName,
+                                      timestamp: new Date(timestamp).toISOString(),
+                                      value: value
+                                  });
+
+                                  const newPoint = {
+                                      timestamp,
+                                      severity: point.severity || 0,
+                                      status: point.status || 0,
+                                      value,
+                                      min: value,
+                                      max: value,
+                                      stddev: 0,
+                                      count: 1,
+                                  };
+
+                                  // Add new point
+                                  newData[pvIndex].data.push(newPoint);
+                                  hasUpdates = true;
+
+                                  // Update rolling window
+                                  const now = Date.now();
+                                  const oneHourAgo = now - 3600000;
+                                  
+                                  // Filter and sort
+                                  newData[pvIndex].data = newData[pvIndex].data
+                                      .filter(point => point.timestamp >= oneHourAgo)
+                                      .sort((a, b) => a.timestamp - b.timestamp);
+
+                                  addDebugLog("Updated dataset", "debug", {
+                                      pv: pvName,
+                                      pointCount: newData[pvIndex].data.length,
+                                      timeRange: {
+                                          start: new Date(oneHourAgo).toISOString(),
+                                          end: new Date(now).toISOString()
+                                      }
+                                  });
+                              }
+                          }
+                      });
+
+                        if (hasUpdates) {
+                            const now = new Date();
+                            const duration = getTimeRangeDuration(timeRangeMode());
+                            setTimeRange({
+                                start: new Date(now.getTime() - duration),
+                                end: now
+                            });
+                            setLastRefresh(now);
+                        }
+
+                        return hasUpdates ? newData : prev;
+                    });
+                },
+                onError: (error) => {
+                    addDebugLog("Live update error", "error", { error });
+                    setError(error);
+                    setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
+                }
+            });
+            
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            setError(errorMessage);
+            addDebugLog("Failed to start live updates", "error", { error: errorMessage });
+            setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
+            liveManager = undefined;
+            return;
+        }
+    } else {
+        try {
+            addDebugLog("Stopping live mode", "info");
+            
+            if (liveManager) {
+                await liveManager.stop();
+                liveManager = undefined;
+            }
+
+            // Keep current time range for historical view
+            const currentEnd = new Date();
+            const duration = getTimeRangeDuration(timeRangeMode());
+            setTimeRange({
+                start: new Date(currentEnd.getTime() - duration),
+                end: currentEnd
+            });
+
+            await handleRefresh();
+            
+            addDebugLog("Live updates stopped successfully", "info");
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            addDebugLog("Error stopping live updates", "error", { error: errorMessage });
+            liveManager = undefined;
+        }
+        setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
     }
+};
 
-    onCleanup(() => {
-      if (intervalId) {
-        clearInterval(intervalId);
-        addDebugLog("Real-time updates stopped", "info");
-      }
-    });
+  // Cleanup
+  onCleanup(async () => {
+    if (liveManager) {
+      await liveManager.stop();
+    }
   });
 
   return (

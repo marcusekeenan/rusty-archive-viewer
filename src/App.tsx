@@ -43,7 +43,7 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main class="pt-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <main class="pt-20">
         <ArchiveViewer />
       </main>
     </div>

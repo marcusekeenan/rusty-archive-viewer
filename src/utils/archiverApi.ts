@@ -53,7 +53,7 @@ export interface NormalizedPVData {
 
 export interface FetchOptions {
     timezone?: string;
-    chart_width?: number;
+    chartWidth?: number;
 }
 
 export enum DataFormat {
@@ -83,8 +83,79 @@ export interface PVStatus {
     last_error?: string;
 }
 
+export interface LiveUpdateConfig {
+    pvs: string[];
+    updateIntervalMs: number;
+    timezone?: string;
+    onData: (data: Record<string, PointValue>) => void;
+    onError?: (error: string) => void;
+}
+
 /**
- * Main data fetching function - backend handles optimization
+ * Manages real-time data updates for a window
+ */
+export class LiveUpdateManager {
+    private unlistenFn?: UnlistenFn;
+    private isActive = false;
+    
+    async start(config: LiveUpdateConfig): Promise<void> {
+        if (this.isActive) {
+            throw new Error("Live updates already running");
+        }
+        
+        this.isActive = true;
+        
+        try {
+            // Start the backend polling
+            await invoke("start_live_updates", {
+                pvs: config.pvs,
+                updateIntervalMs: config.updateIntervalMs,
+                timezone: config.timezone
+            });
+            
+            // Listen for updates
+            this.unlistenFn = await listen<Record<string, PointValue>>(
+                "live-update",
+                (event) => {
+                    if (this.isActive) {
+                        config.onData(event.payload);
+                    }
+                }
+            );
+            
+            // Listen for errors if handler provided
+            if (config.onError) {
+                await listen("live-update-error", (event) => {
+                    if (this.isActive && config.onError) {
+                        config.onError(event.payload as string);
+                    }
+                });
+            }
+        } catch (error) {
+            this.isActive = false;
+            throw error;
+        }
+    }
+    
+    async stop(): Promise<void> {
+        try {
+            console.log("LiveUpdateManager: Stopping...");
+            if (this.unlistenFn) {
+                await this.unlistenFn();
+                this.unlistenFn = undefined;
+                console.log("LiveUpdateManager: Unlisten function cleared");
+            }
+            await invoke("stop_live_updates");
+            console.log("LiveUpdateManager: Backend stopped");
+        } catch (error) {
+            console.error("LiveUpdateManager: Error during stop:", error);
+            throw error;
+        }
+    }
+}
+
+/**
+ * Fetches historical data with automatic optimization
  */
 export async function fetchData(
     pvs: string[],
@@ -93,15 +164,14 @@ export async function fetchData(
     chartWidth: number,
     timezone: string,
 ): Promise<NormalizedPVData[]> {
-    // Convert parameters to snake_case for Tauri
     const params = {
         pvs,
         from: Math.floor(start.getTime() / 1000),
         to: Math.floor(end.getTime() / 1000),
-        chartWidth: chartWidth,  // Use snake_case for Tauri command
+        chartWidth, // Use camelCase for Tauri
         timezone
     };
-    console.log("the timezone is from api", timezone);
+    
     try {
         return await invoke<NormalizedPVData[]>("fetch_data", params);
     } catch (error) {
@@ -110,21 +180,24 @@ export async function fetchData(
     }
 }
 
-export async function fetchLiveData(
+/**
+ * Fetches data at a specific timestamp
+ */
+export async function fetchDataAtTime(
     pvs: string[],
     timestamp?: Date,
     timezone?: string
 ): Promise<Record<string, PointValue>> {
-    const params = {
-        pvs,
-        timestamp: timestamp ? Math.floor(timestamp.getTime() / 1000) : Math.floor(Date.now() / 1000),
-        timezone
-    };
-
     try {
-        return await invoke<Record<string, PointValue>>("fetch_live_data", params);
+        const params = {
+            pvs,
+            timestamp: timestamp ? Math.floor(timestamp.getTime() / 1000) : undefined,
+            timezone
+        };
+
+        return await invoke<Record<string, PointValue>>("fetch_data_at_time", params);
     } catch (error) {
-        console.error("Error getting live data:", error);
+        console.error("Error fetching data at time:", error);
         throw error;
     }
 }
@@ -201,41 +274,11 @@ export async function testConnection(): Promise<boolean> {
     }
 }
 
-export interface LiveUpdateConfig {
-    pvs: string[];
-    bufferSize?: number;
-    callback: (data: NormalizedPVData[]) => void;
+// Helper functions
+export function formatTimestamp(timestamp: number): string {
+    return new Date(timestamp * 1000).toISOString();
 }
 
-/**
- * Starts live updates for the specified PVs
- */
-export async function startLiveUpdates(config: LiveUpdateConfig): Promise<UnlistenFn> {
-    try {
-        // Start the live updates on the backend
-        await invoke<void>("start_live_updates", {
-            pvs: config.pvs,
-            buffer_size: config.bufferSize
-        });
-
-        // Set up the event listener for updates
-        return await listen<NormalizedPVData[]>("live-data-update", (event) => {
-            config.callback(event.payload);
-        });
-    } catch (error) {
-        console.error("Error starting live updates:", error);
-        throw error;
-    }
-}
-
-/**
- * Stops live updates
- */
-export async function stopLiveUpdates(): Promise<void> {
-    try {
-        await invoke<void>("stop_live_updates");
-    } catch (error) {
-        console.error("Error stopping live updates:", error);
-        throw error;
-    }
+export function getCurrentTimestamp(): number {
+    return Math.floor(Date.now() / 1000);
 }

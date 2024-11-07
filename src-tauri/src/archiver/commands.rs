@@ -1,22 +1,27 @@
 //! Tauri commands for interacting with the EPICS Archiver Appliance
 //! Provides the interface between the frontend and the archiver API
 
-use super::api::{ArchiverClient, DataFetch, DataProcess, DataProcessor, DataRequest};
+use super::api::{ArchiverClient, OptimizationLevel, TimeRangeMode};
 use crate::archiver::{export::*, types::*};
+use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{Manager, Window, WindowBuilder, WindowUrl};
+use tokio::sync::Mutex;
+use tokio::time::Duration;
 
 lazy_static::lazy_static! {
     static ref ARCHIVER_CLIENT: Arc<ArchiverClient> = Arc::new(
         ArchiverClient::new().expect("Failed to create archiver client")
     );
+    static ref LIVE_SUBSCRIPTIONS: Arc<Mutex<HashMap<String, tokio::sync::broadcast::Receiver<HashMap<String, PointValue>>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 }
 
 #[tauri::command]
 pub async fn toggle_debug_window(window: Window) -> Result<(), String> {
     let app = window.app_handle();
-    println!("Toggle debug window called"); // Debug log
+    println!("Toggle debug window called");
 
     if let Some(debug_window) = app.get_window("debug") {
         println!("Found existing window");
@@ -55,32 +60,29 @@ pub async fn fetch_data(
     pvs: Vec<String>,
     from: i64,
     to: i64,
-    chart_width: i32, // Consistently using snake_case
+    chart_width: i32,
     timezone: String,
 ) -> Result<Vec<NormalizedPVData>, String> {
     let client = ARCHIVER_CLIENT.clone();
-    let processor = DataProcessor::default();
-    println!("the timezone in command is: {}", timezone);
+    println!("Fetching data with timezone: {}", timezone);
 
-    let time_range = TimeRange {
+    let mode = TimeRangeMode::Fixed {
         start: from,
         end: to,
     };
 
-    // Get optimal operator based on duration and chart width
-    let operator = processor.get_optimal_operator(to - from, Some(chart_width));
-
     let mut results = Vec::new();
     for pv in pvs {
-        let request = DataRequest {
-            pv: pv.clone(),
-            range: time_range.clone(),
-            operator: operator.clone(),
-            format: DataFormat::Json,
-            timezone: Some(timezone.clone()),
-        };
-
-        match client.fetch_data(&request).await {
+        match client
+            .fetch_historical_data(
+                &pv,
+                &mode,
+                OptimizationLevel::Auto,
+                Some(chart_width),
+                Some(&timezone),
+            )
+            .await
+        {
             Ok(data) => results.push(data),
             Err(e) => eprintln!("Error fetching data for {}: {}", pv, e),
         }
@@ -89,19 +91,67 @@ pub async fn fetch_data(
     Ok(results)
 }
 
-/// Gets current or specific timestamp data for multiple PVs
+/// Gets data at a specific timestamp for multiple PVs
 #[tauri::command]
-pub async fn fetch_live_data(
+pub async fn fetch_data_at_time(
     pvs: Vec<String>,
     timestamp: Option<i64>,
-    timezone: Option<String>, // Add timezone parameter
+    timezone: Option<String>,
 ) -> Result<HashMap<String, PointValue>, String> {
     let client = ARCHIVER_CLIENT.clone();
-    let timestamp = timestamp.unwrap_or_else(|| chrono::Utc::now().timestamp());
 
     client
-        .fetch_live_data(&pvs, timestamp, timezone.as_deref())
+        .fetch_data_at_time(&pvs, timestamp, timezone.as_deref())
         .await
+}
+
+/// Start live updates for multiple PVs
+#[tauri::command]
+pub async fn start_live_updates(
+    window: Window,
+    pvs: Vec<String>,
+    update_interval_ms: u64,
+    timezone: Option<String>,
+) -> Result<(), String> {
+    let client = ARCHIVER_CLIENT.clone();
+    let window_id = window.label().to_string();
+
+    let mut subscriptions = LIVE_SUBSCRIPTIONS.lock().await;
+    if subscriptions.contains_key(&window_id) {
+        return Err("Live updates already running for this window".to_string());
+    }
+
+    let rx = client
+        .start_live_updates(pvs, Duration::from_millis(update_interval_ms), timezone)
+        .await?;
+
+    subscriptions.insert(window_id.clone(), rx);
+
+    // Spawn a task to handle the updates
+    let window = Arc::new(window);
+    tokio::spawn(async move {
+        let mut subscriptions = LIVE_SUBSCRIPTIONS.lock().await;
+        if let Some(mut rx) = subscriptions.remove(&window_id) {
+            while let Ok(data) = rx.recv().await {
+                if window.emit("live-update", &data).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// Stop live updates for a window
+#[tauri::command]
+pub async fn stop_live_updates(window: Window) -> Result<(), String> {
+    let window_id = window.label().to_string();
+    let mut subscriptions = LIVE_SUBSCRIPTIONS.lock().await;
+    subscriptions.remove(&window_id);
+
+    let client = ARCHIVER_CLIENT.clone();
+    client.stop_live_updates().await
 }
 
 /// Exports data in various formats
@@ -113,22 +163,17 @@ pub async fn export_data(
     format: DataFormat,
 ) -> Result<String, String> {
     let client = ARCHIVER_CLIENT.clone();
-    let time_range = TimeRange {
+    let mode = TimeRangeMode::Fixed {
         start: from,
         end: to,
     };
 
     let mut results = Vec::new();
     for pv in pvs {
-        let request = DataRequest {
-            pv: pv.clone(),
-            range: time_range.clone(),
-            operator: DataOperator::Raw, // Always use raw data for exports
-            format: format.clone(),
-            timezone: None,
-        };
-
-        if let Ok(data) = client.fetch_data(&request).await {
+        if let Ok(data) = client
+            .fetch_historical_data(&pv, &mode, OptimizationLevel::Raw, None, None)
+            .await
+        {
             results.push(data);
         }
     }
@@ -153,81 +198,182 @@ pub async fn get_pv_metadata(pv: String) -> Result<Meta, String> {
 #[tauri::command]
 pub async fn validate_pvs(pvs: Vec<String>) -> Result<Vec<bool>, String> {
     let client = ARCHIVER_CLIENT.clone();
-    let mut results = Vec::with_capacity(pvs.len());
+    let metadata_results = client.fetch_multiple_metadata(&pvs).await;
 
-    for pv in pvs {
-        match client.fetch_metadata(&pv).await {
-            Ok(_) => results.push(true),
-            Err(_) => results.push(false),
-        }
-    }
-
-    Ok(results)
+    Ok(pvs
+        .iter()
+        .map(|pv| metadata_results.get(pv).map_or(false, |r| r.is_ok()))
+        .collect())
 }
 
 /// Gets status information for multiple PVs
 #[tauri::command]
 pub async fn get_pv_status(pvs: Vec<String>) -> Result<Vec<PVStatus>, String> {
     let client = ARCHIVER_CLIENT.clone();
-    let mut statuses = Vec::with_capacity(pvs.len());
+    let metadata_results = client.fetch_multiple_metadata(&pvs).await;
 
-    for pv in pvs {
-        let metadata = client.fetch_metadata(&pv).await;
-        let status = PVStatus {
-            name: pv.clone(),
-            connected: metadata.is_ok(),
-            last_event_time: None,
-            last_status: metadata.as_ref().err().map(|e| e.to_string()),
-            archived: metadata.is_ok(),
-            error_count: 0,
-            last_error: None,
-        };
-        statuses.push(status);
-    }
-
-    Ok(statuses)
+    Ok(pvs
+        .iter()
+        .map(|pv| {
+            let metadata = metadata_results
+                .get(pv)
+                .cloned()
+                .unwrap_or(Err("No metadata".to_string()));
+            PVStatus {
+                name: pv.clone(),
+                connected: metadata.is_ok(),
+                last_event_time: None,
+                last_status: metadata.as_ref().err().map(|e| e.to_string()),
+                archived: metadata.is_ok(),
+                error_count: 0,
+                last_error: None,
+            }
+        })
+        .collect())
 }
 
 /// Tests connection to the archiver
 #[tauri::command]
 pub async fn test_connection() -> Result<bool, String> {
     let client = ARCHIVER_CLIENT.clone();
-    match client.fetch_metadata("ROOM:LI30:1:OUTSIDE_TEMP").await {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
+    client
+        .fetch_metadata("ROOM:LI30:1:OUTSIDE_TEMP")
+        .await
+        .map(|_| true)
+        .or(Ok(false))
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use chrono::Utc;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use tokio::time::Duration;
 
-//     #[tokio::test]
-//     async fn test_fetch_data() {
-//         let pvs = vec!["TEST:PV1".to_string()];
-//         let now = Utc::now().timestamp();
-//         let result = fetch_data(
-//             pvs,
-//             now - 3600, // 1 hour ago
-//             now,
-//             None,
-//         )
-//         .await;
-//         assert!(result.is_ok());
-//     }
+    const TEST_PV: &str = "ROOM:LI30:1:OUTSIDE_TEMP";
+    const TEST_INVALID_PV: &str = "INVALID:PV:NAME:123";
 
-//     #[tokio::test]
-//     async fn test_get_live_data() {
-//         let pvs = vec!["TEST:PV1".to_string()];
-//         let result = get_live_data(pvs, None).await;
-//         assert!(result.is_ok());
-//     }
+    #[tokio::test]
+    async fn test_fetch_data() {
+        let pvs = vec![TEST_PV.to_string()];
+        let now = Utc::now().timestamp();
+        let result = fetch_data(pvs, now - 3600, now, 1000, "UTC".to_string()).await;
 
-//     #[tokio::test]
-//     async fn test_validate_pvs() {
-//         let pvs = vec!["TEST:PV1".to_string(), "INVALID:PV".to_string()];
-//         let result = validate_pvs(pvs).await;
-//         assert!(result.is_ok());
-//     }
-// }
+        assert!(result.is_ok(), "Failed to fetch data: {:?}", result.err());
+
+        let data = result.unwrap();
+        assert!(!data.is_empty(), "No data returned");
+
+        let pv_data = &data[0];
+        assert_eq!(pv_data.meta.name, TEST_PV);
+        assert!(!pv_data.data.is_empty(), "No points in data");
+
+        // Just verify we got some data within a reasonable range
+        if let Some(stats) = &pv_data.statistics {
+            assert!(
+                stats.first_timestamp <= stats.last_timestamp,
+                "First timestamp after last timestamp"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_live_updates() {
+        // Instead of using Tauri window, we'll test the underlying functionality
+        let client = ARCHIVER_CLIENT.clone();
+        let pvs = vec![TEST_PV.to_string()];
+
+        let result = client
+            .start_live_updates(pvs.clone(), Duration::from_secs(1), Some("UTC".to_string()))
+            .await;
+
+        assert!(result.is_ok(), "Failed to start live updates");
+
+        let mut rx = result.unwrap();
+
+        // Wait for one update
+        let update = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+
+        assert!(update.is_ok(), "Timeout waiting for update");
+        assert!(update.unwrap().is_ok(), "Error receiving update");
+
+        client
+            .stop_live_updates()
+            .await
+            .expect("Failed to stop updates");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_data_at_time() {
+        let pvs = vec![TEST_PV.to_string()];
+        let now = Utc::now().timestamp();
+        let result = fetch_data_at_time(pvs, Some(now), Some("UTC".to_string())).await;
+
+        assert!(
+            result.is_ok(),
+            "Failed to fetch data at time: {:?}",
+            result.err()
+        );
+
+        let data = result.unwrap();
+        assert!(!data.is_empty(), "No data returned");
+        assert!(data.contains_key(TEST_PV), "Data for test PV not found");
+
+        // Just verify we got some data (timestamp checks are too strict for real server)
+        let point = &data[TEST_PV];
+        assert!(point.secs > 0, "Invalid timestamp");
+    }
+
+    #[tokio::test]
+    async fn test_validate_pvs() {
+        let pvs = vec![TEST_PV.to_string(), TEST_INVALID_PV.to_string()];
+        let result = validate_pvs(pvs).await;
+
+        assert!(result.is_ok(), "Failed to validate PVs: {:?}", result.err());
+
+        let validations = result.unwrap();
+        assert_eq!(validations.len(), 2, "Wrong number of validation results");
+        // Just verify we got responses, don't assert valid/invalid
+        // as PV status might change
+    }
+
+    #[tokio::test]
+    async fn test_get_pv_metadata() {
+        let result = get_pv_metadata(TEST_PV.to_string()).await;
+
+        if let Ok(metadata) = result {
+            assert_eq!(metadata.name, TEST_PV);
+            println!("Metadata retrieved successfully");
+        } else {
+            println!("Metadata retrieval failed: {:?}", result.err());
+            // Don't fail the test as the PV might be temporarily unavailable
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_pv_status() {
+        let pvs = vec![TEST_PV.to_string(), TEST_INVALID_PV.to_string()];
+        let result = get_pv_status(pvs).await;
+
+        assert!(
+            result.is_ok(),
+            "Failed to get PV status: {:?}",
+            result.err()
+        );
+
+        let statuses = result.unwrap();
+        assert_eq!(statuses.len(), 2, "Wrong number of status results");
+
+        // Don't assert on connection status as it might change
+        for status in statuses {
+            println!("PV: {} Status: connected={}", status.name, status.connected);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_test_connection() {
+        let result = test_connection().await;
+        assert!(result.is_ok(), "Connection test failed: {:?}", result.err());
+        // Don't assert on connection status as it might be temporarily down
+        println!("Connection test result: {:?}", result.unwrap());
+    }
+}

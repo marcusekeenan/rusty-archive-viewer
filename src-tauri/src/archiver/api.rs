@@ -1,8 +1,6 @@
-//! API module for interacting with the EPICS Archiver Appliance
-//! Handles all HTTP communication and data processing
+//! EPICS Archiver Appliance API Interface
+//! Handles data retrieval, optimization, and live updates for EPICS PVs
 
-use crate::archiver::constants::{API_CONFIG, ERRORS};
-use crate::archiver::types::*;
 use chrono::{TimeZone, Utc};
 use chrono_tz::Tz;
 use futures::future::join_all;
@@ -10,44 +8,166 @@ use reqwest::Client;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
+use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
+use tokio::time::{Duration, Interval};
 use url::Url;
 
-#[async_trait::async_trait]
-pub trait DataFetch {
-    async fn fetch_data(&self, request: &DataRequest) -> Result<NormalizedPVData, String>;
-    async fn fetch_metadata(&self, pv: &str) -> Result<Meta, String>;
-    async fn fetch_live_data(
-        &self,
-        pvs: &[String],
-        timestamp: i64,
-        timezone: Option<&str>, // Add timezone parameter
-    ) -> Result<HashMap<String, PointValue>, String>;
+use crate::archiver::constants::{API_CONFIG, ERRORS};
+use crate::archiver::types::*;
+
+/// Defines how time ranges are specified for data retrieval
+#[derive(Debug, Clone)]
+pub enum TimeRangeMode {
+    Fixed {
+        start: i64,
+        end: i64,
+    },
+    Rolling {
+        duration: Duration,
+        end: Option<i64>, // None means "now"
+    },
+    Live {
+        base_mode: Box<TimeRangeMode>,
+        last_update: i64,
+    },
 }
 
-pub trait DataProcess {
-    fn process_chunks(&self, chunks: Vec<PVData>) -> Result<NormalizedPVData, String>;
-    fn calculate_chunks(&self, from: i64, to: i64, width: Option<i32>) -> Vec<DataChunk>;
-    fn get_optimal_operator(&self, duration: i64, width: Option<i32>) -> DataOperator;
+impl TimeRangeMode {
+    pub fn get_range(&self) -> (i64, i64) {
+        match self {
+            TimeRangeMode::Fixed { start, end } => (*start, *end),
+            TimeRangeMode::Rolling { duration, end } => {
+                let end_time = end.unwrap_or_else(|| Utc::now().timestamp());
+                let start_time = end_time - duration.as_secs() as i64;
+                (start_time, end_time)
+            }
+            TimeRangeMode::Live { base_mode, .. } => base_mode.get_range(),
+        }
+    }
+
+    pub fn is_live(&self) -> bool {
+        matches!(self, TimeRangeMode::Live { .. })
+    }
 }
 
+/// Data optimization configuration
+#[derive(Debug, Clone, Copy)]
+pub enum OptimizationLevel {
+    Raw,
+    Optimized(i32), // number of points
+    Auto,           // decides based on time range
+}
+
+impl OptimizationLevel {
+    pub fn get_operator(&self, duration: i64, chart_width: Option<i32>) -> DataOperator {
+        match self {
+            OptimizationLevel::Raw => DataOperator::Raw,
+            OptimizationLevel::Optimized(points) => DataOperator::Optimized(*points),
+            OptimizationLevel::Auto => {
+                let points_per_pixel =
+                    chart_width.map_or(duration as f64 / 1000.0, |w| duration as f64 / w as f64);
+
+                if points_per_pixel <= 1.0 {
+                    DataOperator::Raw
+                } else if duration <= 3600 {
+                    DataOperator::Mean(Some(10)) // 10 second bins for <= 1 hour
+                } else if duration <= 86400 {
+                    DataOperator::Mean(Some(60)) // 1 minute bins for <= 1 day
+                } else if duration <= 604800 {
+                    DataOperator::Mean(Some(300)) // 5 minute bins for <= 1 week
+                } else {
+                    DataOperator::Mean(Some(900)) // 15 minute bins for > 1 week
+                }
+            }
+        }
+    }
+}
+
+/// Request configuration for data fetching
 #[derive(Debug, Clone)]
 pub struct DataRequest {
     pub pv: String,
     pub range: TimeRange,
     pub operator: DataOperator,
     pub format: DataFormat,
-    pub timezone: Option<String>, // Add timezone field
+    pub timezone: Option<String>,
 }
 
+/// Main client for interacting with the EPICS Archiver Appliance
 pub struct ArchiverClient {
     client: Client,
     semaphore: Arc<Semaphore>,
     base_url: String,
+    data_cache: Arc<RwLock<HashMap<String, NormalizedPVData>>>,
+    live_update_tx: Arc<Mutex<Option<broadcast::Sender<HashMap<String, PointValue>>>>>,
+    live_interval: Arc<Mutex<Option<Interval>>>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct DataProcessor;
+
+impl DataProcessor {
+    pub fn calculate_chunks(&self, from: i64, to: i64, _width: Option<i32>) -> Vec<DataChunk> {
+        let duration = to - from;
+        let chunk_size = match duration {
+            d if d <= 86400 => 3600,   // 1 hour chunks for <= 1 day
+            d if d <= 604800 => 86400, // 1 day chunks for <= 1 week
+            _ => 604800,               // 1 week chunks for > 1 week
+        };
+
+        let mut chunks = Vec::new();
+        let mut current = from;
+
+        while current < to {
+            let chunk_end = (current + chunk_size).min(to);
+            chunks.push(DataChunk {
+                start: current,
+                end: chunk_end,
+            });
+            current = chunk_end;
+        }
+
+        chunks
+    }
+
+    pub fn process_chunks(&self, chunks: Vec<PVData>) -> Result<NormalizedPVData, String> {
+        if chunks.is_empty() {
+            return Err(ERRORS.no_data.to_string());
+        }
+    
+        let mut all_points = Vec::new();
+        let meta = chunks[0].meta.clone();
+    
+        for chunk in chunks {
+            for point in chunk.data {
+                if let Some(value) = point.value_as_f64() {
+                    // The timestamp is already in the correct timezone from the API
+                    let timestamp = point.secs * 1000 + point.nanos.unwrap_or(0) / 1_000_000;
+    
+                    all_points.push(ProcessedPoint {
+                        timestamp,
+                        severity: point.severity.unwrap_or(0),
+                        status: point.status.unwrap_or(0),
+                        value,
+                        min: value,
+                        max: value,
+                        stddev: 0.0,
+                        count: 1,
+                    });
+                }
+            }
+        }
+    
+        all_points.sort_by_key(|p| p.timestamp);
+        all_points.dedup_by_key(|p| p.timestamp);
+    
+        Ok(NormalizedPVData {
+            meta,
+            data: all_points.clone(),
+            statistics: calculate_statistics(&all_points),
+        })
+    }
+}
 
 impl ArchiverClient {
     pub fn new() -> Result<Self, String> {
@@ -64,6 +184,9 @@ impl ArchiverClient {
             client,
             semaphore,
             base_url: API_CONFIG.base_url.to_string(),
+            data_cache: Arc::new(RwLock::new(HashMap::new())),
+            live_update_tx: Arc::new(Mutex::new(None)),
+            live_interval: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -77,7 +200,7 @@ impl ArchiverClient {
             }
         }
 
-        Some(dt.to_rfc3339()) // Fallback to UTC if no timezone is provided
+        Some(dt.to_rfc3339())
     }
 
     fn build_url(&self, endpoint: &str, params: &[(&str, &str)]) -> Result<Url, String> {
@@ -118,6 +241,64 @@ impl ArchiverClient {
             .map_err(|e| format!("Failed to parse JSON response: {}", e))
     }
 
+    pub async fn fetch_historical_data(
+        &self,
+        pv: &str,
+        mode: &TimeRangeMode,
+        optimization: OptimizationLevel,
+        chart_width: Option<i32>,
+        timezone: Option<&str>,
+    ) -> Result<NormalizedPVData, String> {
+        let (start, end) = mode.get_range();
+        let duration = end - start;
+        let operator = optimization.get_operator(duration, chart_width);
+
+        let request = DataRequest {
+            pv: pv.to_string(),
+            range: TimeRange { start, end },
+            operator,
+            format: DataFormat::Json,
+            timezone: timezone.map(String::from),
+        };
+
+        let processor = DataProcessor::default();
+        let chunks = processor.calculate_chunks(request.range.start, request.range.end, None);
+
+        let chunk_futures: Vec<_> = chunks
+            .iter()
+            .map(|chunk| {
+                self.fetch_chunk_data(
+                    &request.pv,
+                    chunk,
+                    &request.operator,
+                    &request.format,
+                    request.timezone.as_deref(),
+                )
+            })
+            .collect();
+
+        let results = join_all(chunk_futures).await;
+        let mut chunk_data = Vec::new();
+
+        for result in results {
+            match result {
+                Ok(data) => chunk_data.push(data),
+                Err(e) => eprintln!("Warning: Failed to fetch chunk: {}", e),
+            }
+        }
+
+        if chunk_data.is_empty() {
+            return Err(ERRORS.no_data.to_string());
+        }
+
+        let result = processor.process_chunks(chunk_data)?;
+        // Update cache
+        let mut cache = self.data_cache.write().await;
+        cache.insert(pv.to_string(), result.clone());
+
+        Ok(result)
+    }
+
     async fn fetch_chunk_data(
         &self,
         pv: &str,
@@ -140,100 +321,166 @@ impl ArchiverClient {
             .format_date(chunk.end * 1000, timezone)
             .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
 
-        println!("The start time is: {:?}", from_formatted);
-        println!("THe end time is: {:?}", to_formatted);
-
         let pv_query = if operator.supports_binning() {
             format!("{}({})", operator.to_string(), pv)
         } else {
             pv.to_string()
         };
 
-        // Build parameters vector
         let mut params = vec![
             ("pv", pv_query.as_str()),
             ("from", &from_formatted),
             ("to", &to_formatted),
         ];
 
-        // Add timezone if provided
         if let Some(tz) = timezone {
             params.push(("timeZone", tz));
         }
 
         let url = self.build_url(&format!("getData.{}", format.as_str()), &params)?;
-
         self.get(url).await.and_then(|data: Vec<PVData>| {
             data.into_iter()
                 .next()
                 .ok_or_else(|| ERRORS.no_data.to_string())
         })
     }
+
+    pub async fn start_live_updates(
+        &self,
+        pvs: Vec<String>,
+        update_interval: Duration,
+        timezone: Option<String>,
+    ) -> Result<broadcast::Receiver<HashMap<String, PointValue>>, String> {
+        let mut interval_lock = self.live_interval.lock().await;
+        let mut tx_lock = self.live_update_tx.lock().await;
+
+        if interval_lock.is_some() {
+            return Err("Live updates already running".to_string());
+        }
+
+        let (tx, rx) = broadcast::channel(32);
+        *tx_lock = Some(tx.clone());
+
+        let interval = tokio::time::interval(update_interval);
+        *interval_lock = Some(interval);
+
+        let client = self.clone();
+        let pvs = Arc::new(pvs);
+        let timezone = Arc::new(timezone);
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(update_interval);
+
+            loop {
+                interval.tick().await;
+
+                match client.fetch_live_data(&pvs, timezone.as_deref()).await {
+                    Ok(data) => {
+                        if tx.receiver_count() == 0 {
+                            break;
+                        }
+                        if tx.send(data).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => eprintln!("Error fetching live data: {}", e),
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
+    pub async fn stop_live_updates(&self) -> Result<(), String> {
+        let mut interval_lock = self.live_interval.lock().await;
+        let mut tx_lock = self.live_update_tx.lock().await;
+        *interval_lock = None;
+        *tx_lock = None;
+        Ok(())
+    }
+
+    pub async fn fetch_live_data(
+    &self,
+    pvs: &[String],
+    timezone: Option<&str>,
+) -> Result<HashMap<String, PointValue>, String> {
+    if pvs.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // Instead of exact timestamp, use a small time window up to now
+    let now = Utc::now().timestamp();
+    let five_seconds_ago = now - 5; // 5 second window
+
+    let from_formatted = self
+        .format_date(five_seconds_ago * 1000, timezone)
+        .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
+    let to_formatted = self
+        .format_date(now * 1000, timezone)
+        .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
+
+    let mut params = vec![
+        ("from", from_formatted.as_str()),
+        ("to", to_formatted.as_str())
+    ];
+
+    if let Some(tz) = timezone {
+        params.push(("timeZone", tz));
+    }
+
+    let mut url = self.build_url("getData.json", &params)?;
+
+    {
+        let mut query_pairs = url.query_pairs_mut();
+        for pv in pvs {
+            query_pairs.append_pair("pv", pv);
+        }
+    }
+
+    let response: Vec<PVData> = self.get(url).await?;
+    
+    // Take the latest point for each PV
+    Ok(response
+        .into_iter()
+        .filter_map(|pv_data| {
+            pv_data.data.last().map(|point| {
+                (
+                    pv_data.meta.name.clone(),
+                    PointValue {
+                        secs: point.secs,
+                        nanos: point.nanos,
+                        val: point.val.clone(),
+                        severity: point.severity,
+                        status: point.status,
+                    },
+                )
+            })
+        })
+        .collect())
 }
 
-#[async_trait::async_trait]
-impl DataFetch for ArchiverClient {
-    async fn fetch_data(&self, request: &DataRequest) -> Result<NormalizedPVData, String> {
-        let processor = DataProcessor::default();
-        let chunks = processor.calculate_chunks(request.range.start, request.range.end, None);
-
-        // Create futures for each chunk with proper error handling
-        let chunk_futures: Vec<_> = chunks
-            .iter()
-            .map(|chunk| {
-                let pv = request.pv.clone();
-                let operator = request.operator.clone();
-                let format = request.format.clone();
-                let timezone = request.timezone.clone();
-                println!("the timezoni in api is: {:?}", timezone);
-
-                async move {
-                    self.fetch_chunk_data(&pv, chunk, &operator, &format, timezone.as_deref())
-                        .await
-                }
-            })
-            .collect();
-
-        // Execute all futures
-        let results = join_all(chunk_futures).await;
-        let mut chunk_data = Vec::new();
-
-        // Process results
-        for result in results {
-            match result {
-                Ok(data) => chunk_data.push(data),
-                Err(e) => eprintln!("Warning: Failed to fetch chunk: {}", e),
-            }
-        }
-
-        if chunk_data.is_empty() {
-            return Err(ERRORS.no_data.to_string());
-        }
-
-        processor.process_chunks(chunk_data)
-    }
-
-    async fn fetch_metadata(&self, pv: &str) -> Result<Meta, String> {
-        let url = self.build_url("bpl/getMetadata", &[("pv", pv)])?;
-        self.get(url).await
-    }
-
-    async fn fetch_live_data(
+    pub async fn fetch_data_at_time(
         &self,
         pvs: &[String],
-        timestamp: i64,
+        timestamp: Option<i64>,
         timezone: Option<&str>,
     ) -> Result<HashMap<String, PointValue>, String> {
         if pvs.is_empty() {
             return Ok(HashMap::new());
         }
 
-        // Format the timestamp with timezone
+        let timestamp = timestamp.unwrap_or_else(|| Utc::now().timestamp());
         let timestamp_formatted = self
             .format_date(timestamp * 1000, timezone)
             .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
 
-        let mut url = self.build_url("getData.json", &[("at", &timestamp_formatted)])?;
+        let mut params = vec![("at", timestamp_formatted.as_str())];
+
+        if let Some(tz) = timezone {
+            params.push(("timeZone", tz));
+        }
+
+        let mut url = self.build_url("getData.json", &params)?;
 
         {
             let mut query_pairs = url.query_pairs_mut();
@@ -243,7 +490,8 @@ impl DataFetch for ArchiverClient {
         }
 
         let response: Vec<PVData> = self.get(url).await?;
-        let result = response
+
+        Ok(response
             .into_iter()
             .filter_map(|pv_data| {
                 pv_data.data.first().map(|point| {
@@ -259,81 +507,39 @@ impl DataFetch for ArchiverClient {
                     )
                 })
             })
+            .collect())
+    }
+
+    pub async fn fetch_metadata(&self, pv: &str) -> Result<Meta, String> {
+        let url = self.build_url("bpl/getMetadata", &[("pv", pv)])?;
+        self.get(url).await
+    }
+
+    pub async fn fetch_multiple_metadata(
+        &self,
+        pvs: &[String],
+    ) -> HashMap<String, Result<Meta, String>> {
+        let futures: Vec<_> = pvs
+            .iter()
+            .map(|pv| async {
+                let result = self.fetch_metadata(pv).await;
+                (pv.clone(), result)
+            })
             .collect();
 
-        Ok(result)
+        join_all(futures).await.into_iter().collect()
     }
 }
 
-impl DataProcess for DataProcessor {
-    fn process_chunks(&self, chunks: Vec<PVData>) -> Result<NormalizedPVData, String> {
-        if chunks.is_empty() {
-            return Err(ERRORS.no_data.to_string());
-        }
-
-        let mut all_points = Vec::new();
-        let meta = chunks[0].meta.clone();
-
-        for chunk in chunks {
-            for point in chunk.data {
-                if let Some(value) = point.value_as_f64() {
-                    all_points.push(ProcessedPoint {
-                        timestamp: point.secs * 1000 + point.nanos.unwrap_or(0) / 1_000_000,
-                        severity: point.severity.unwrap_or(0),
-                        status: point.status.unwrap_or(0),
-                        value,
-                        min: value,
-                        max: value,
-                        stddev: 0.0,
-                        count: 1,
-                    });
-                }
-            }
-        }
-
-        all_points.sort_by_key(|p| p.timestamp);
-        all_points.dedup_by_key(|p| p.timestamp);
-
-        Ok(NormalizedPVData {
-            meta,
-            data: all_points.clone(),
-            statistics: calculate_statistics(&all_points),
-        })
-    }
-
-    fn calculate_chunks(&self, from: i64, to: i64, width: Option<i32>) -> Vec<DataChunk> {
-        let duration = to - from;
-        let chunk_size = match duration {
-            d if d <= 86400 => 3600,   // 1 hour chunks for <= 1 day
-            d if d <= 604800 => 86400, // 1 day chunks for <= 1 week
-            _ => 604800,               // 1 week chunks for > 1 week
-        };
-
-        let mut chunks = Vec::new();
-        let mut current = from;
-
-        while current < to {
-            let chunk_end = (current + chunk_size).min(to);
-            chunks.push(DataChunk {
-                start: current,
-                end: chunk_end,
-            });
-            current = chunk_end;
-        }
-
-        chunks
-    }
-
-    fn get_optimal_operator(&self, duration: i64, width: Option<i32>) -> DataOperator {
-        let points_per_pixel = width
-            .map(|w| duration / w as i64)
-            .unwrap_or(duration / 1000);
-
-        match duration {
-            d if d <= 3600 || points_per_pixel <= 1 => DataOperator::Raw,
-            d if d <= 86400 => DataOperator::Mean(Some(10)), // 10 second bins for <= 1 day
-            d if d <= 604800 => DataOperator::Mean(Some(60)), // 1 minute bins for <= 1 week
-            _ => DataOperator::Mean(Some(300)),              // 5 minute bins for > 1 week
+impl Clone for ArchiverClient {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            semaphore: self.semaphore.clone(),
+            base_url: self.base_url.clone(),
+            data_cache: self.data_cache.clone(),
+            live_update_tx: self.live_update_tx.clone(),
+            live_interval: self.live_interval.clone(),
         }
     }
 }
@@ -362,19 +568,146 @@ fn calculate_statistics(points: &[ProcessedPoint]) -> Option<Statistics> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::time::sleep;
 
     #[tokio::test]
-    async fn test_fetch_data() {
-        // Add tests...
+    async fn test_historical_data_fetch() {
+        let client = ArchiverClient::new().unwrap();
+        let mode = TimeRangeMode::Fixed {
+            start: Utc::now().timestamp() - 3600,
+            end: Utc::now().timestamp(),
+        };
+
+        let result = client
+            .fetch_historical_data(
+                "ROOM:LI30:1:OUTSIDE_TEMP",
+                &mode,
+                OptimizationLevel::Auto,
+                Some(1000),
+                Some("UTC"),
+            )
+            .await;
+
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_fetch_metadata() {
-        // Add tests...
+    async fn test_live_updates() {
+        let client = ArchiverClient::new().unwrap();
+        let pvs = vec!["ROOM:LI30:1:OUTSIDE_TEMP".to_string()];
+
+        let mut rx = client
+            .start_live_updates(pvs.clone(), Duration::from_secs(1), Some("UTC".to_string()))
+            .await
+            .unwrap();
+
+        // Wait for some updates
+        let mut update_count = 0;
+        while update_count < 3 {
+            if let Ok(data) = rx.recv().await {
+                assert!(!data.is_empty());
+                update_count += 1;
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
+
+        let stop_result = client.stop_live_updates().await;
+        assert!(stop_result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_fetch_live_data() {
-        // Add tests...
+    async fn test_rolling_window() {
+        let client = ArchiverClient::new().unwrap();
+
+        // Set the rolling window duration to 1 hour (3600 seconds)
+        let mode = TimeRangeMode::Rolling {
+            duration: Duration::from_secs(3600),
+            end: None,
+        };
+
+        // Calculate the expected start and end times before fetching data
+        let now = Utc::now().timestamp() * 1000;
+        let start_time = now - 3600000; // 1 hour ago in milliseconds
+        let buffer = 10000; // Allow a 10-second buffer on either end
+
+        // Fetch historical data for the rolling window
+        let result = client
+            .fetch_historical_data(
+                "ROOM:LI30:1:OUTSIDE_TEMP",
+                &mode,
+                OptimizationLevel::Auto,
+                Some(1000),
+                Some("UTC"),
+            )
+            .await;
+
+        assert!(result.is_ok(), "Failed to fetch historical data");
+
+        if let Ok(data) = result {
+            for point in data.data {
+                // Assert that each point falls within the buffered time range
+                assert!(
+                    (start_time - buffer) <= point.timestamp && point.timestamp <= (now + buffer),
+                    "Point timestamp out of expected range: {} not within {} - {}",
+                    point.timestamp,
+                    start_time - buffer,
+                    now + buffer
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_requests() {
+        let client = ArchiverClient::new().unwrap();
+        let mode = TimeRangeMode::Fixed {
+            start: Utc::now().timestamp() - 3600,
+            end: Utc::now().timestamp(),
+        };
+
+        let pvs = vec![
+            "ROOM:LI30:1:OUTSIDE_TEMP",
+            "CTE:CM33:2502:B1:TEMP",
+            "CTE:CM34:2502:B1:TEMP",
+            "CTE:CM35:2502:B1:TEMP",
+        ];
+
+        let futures: Vec<_> = pvs
+            .iter()
+            .map(|&pv| {
+                client.fetch_historical_data(
+                    pv,
+                    &mode,
+                    OptimizationLevel::Auto,
+                    Some(1000),
+                    Some("UTC"),
+                )
+            })
+            .collect();
+
+        let results = join_all(futures).await;
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    #[tokio::test]
+    async fn test_cache_behavior() {
+        let client = ArchiverClient::new().unwrap();
+        let pv = "ROOM:LI30:1:OUTSIDE_TEMP";
+
+        // Initial fetch
+        let mode = TimeRangeMode::Fixed {
+            start: Utc::now().timestamp() - 3600,
+            end: Utc::now().timestamp(),
+        };
+
+        let result = client
+            .fetch_historical_data(pv, &mode, OptimizationLevel::Auto, Some(1000), Some("UTC"))
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify cache
+        let cache = client.data_cache.read().await;
+        assert!(cache.contains_key(pv));
     }
 }
