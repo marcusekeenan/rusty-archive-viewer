@@ -217,43 +217,62 @@ impl ArchiverClient {
         Some(dt.to_rfc3339())
     }
 
-    fn build_url(&self, endpoint: &str, params: &[(&str, &str)]) -> Result<Url, String> {
+    pub fn build_url(&self, endpoint: &str, params: &[(&str, &str)]) -> Result<Url, String> {
         let mut url = Url::parse(&format!("{}/{}", self.base_url, endpoint))
             .map_err(|e| format!("Invalid URL: {}", e))?;
 
-        url.query_pairs_mut().extend_pairs(params);
+        {
+            let mut query_pairs = url.query_pairs_mut();
+            for &(key, value) in params {
+                query_pairs.append_pair(key, value);
+            }
+        }
+
         Ok(url)
     }
 
-    async fn get<T: DeserializeOwned>(&self, url: Url) -> Result<T, String> {
-        let _permit = self
-            .semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| format!("Failed to acquire rate limit permit: {}", e))?;
+    async fn get<T>(&self, url: Url) -> Result<T, String> 
+where 
+    T: DeserializeOwned,
+{
+    let _permit = self
+        .semaphore
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| format!("Failed to acquire rate limit permit: {}", e))?;
 
-        let response = self
-            .client
-            .get(url.clone())
-            .send()
-            .await
-            .map_err(|e| format!("HTTP request failed: {}", e))?;
+    println!("Making GET request to: {}", url);
 
-        if !response.status().is_success() {
-            return Err(format!(
-                "{}: {} ({})",
-                ERRORS.server_error,
-                response.status(),
-                url.as_str()
-            ));
-        }
+    let response = self
+        .client
+        .get(url.clone())
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
 
-        response
-            .json::<T>()
-            .await
-            .map_err(|e| format!("Failed to parse JSON response: {}", e))
+    println!("Response status: {}", response.status());
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "{}: {} ({})",
+            ERRORS.server_error,
+            response.status(),
+            url.as_str()
+        ));
     }
+
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to get response text: {}", e))?;
+
+    println!("Raw response text: {}", text);
+
+    serde_json::from_str::<T>(&text)
+        .map_err(|e| format!("Failed to parse JSON response: {} - Raw text: {}", e, text))
+}
+
 
     pub async fn fetch_historical_data(
         &self,
@@ -358,7 +377,7 @@ impl ArchiverClient {
                 .ok_or_else(|| ERRORS.no_data.to_string())
         })
     }
-    
+
     pub async fn start_live_updates(
         &self,
         pvs: Vec<String>,
@@ -369,10 +388,10 @@ impl ArchiverClient {
 
         // Reset state
         self.running.store(true, Ordering::SeqCst);
-        
+
         // Create new channel with larger buffer
         let (tx, rx) = broadcast::channel(100);
-        
+
         {
             let mut tx_lock = self.live_update_tx.lock().await;
             *tx_lock = Some(tx.clone());
@@ -385,19 +404,11 @@ impl ArchiverClient {
         let running = self.running.clone();
 
         println!("Creating live update task for PVs: {:?}", pvs);
-        
+
         let task = tokio::spawn(async move {
             println!("Live update task started");
             let mut interval = tokio::time::interval(update_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-            // Initial fetch
-            if let Ok(initial_data) = client.fetch_live_data(&pvs, timezone.as_deref()).await {
-                println!("Initial data fetch successful: {} points", initial_data.len());
-                if let Err(e) = tx.send(initial_data) {
-                    println!("Error sending initial data: {}", e);
-                }
-            }
 
             while running.load(Ordering::SeqCst) {
                 tokio::select! {
@@ -406,6 +417,12 @@ impl ArchiverClient {
                         break;
                     }
                     _ = interval.tick() => {
+                        // Check if there are any receivers
+                        if tx.receiver_count() == 0 {
+                            println!("No receivers left, stopping updates");
+                            break;
+                        }
+
                         println!("Tick received, fetching live data");
                         match client.fetch_live_data(&pvs, timezone.as_deref()).await {
                             Ok(data) => {
@@ -415,10 +432,7 @@ impl ArchiverClient {
                                         Ok(_) => println!("Live data sent successfully"),
                                         Err(e) => {
                                             println!("Error sending live data: {}", e);
-                                            if tx.receiver_count() == 0 {
-                                                println!("No receivers left, breaking loop");
-                                                break;
-                                            }
+                                            break;
                                         }
                                     }
                                 } else {
@@ -448,10 +462,10 @@ impl ArchiverClient {
 
     pub async fn stop_live_updates(&self) -> Result<(), String> {
         println!("Stopping live updates...");
-        
+
         // Set running to false first
         self.running.store(false, Ordering::SeqCst);
-        
+
         // Signal shutdown
         self.shutdown_signal.notify_waiters();
         println!("Shutdown signal sent");
@@ -506,57 +520,99 @@ impl ArchiverClient {
         if pvs.is_empty() {
             return Ok(HashMap::new());
         }
-
-        println!("Fetching live data for PVs: {:?}", pvs);
-
+    
+        println!("=== Starting live data fetch ===");
+        println!("Requested PVs: {:?}", pvs);
+    
         let now = Utc::now().timestamp();
         let five_seconds_ago = now - 5;
-
+    
         let from_formatted = self
             .format_date(five_seconds_ago * 1000, timezone)
             .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
         let to_formatted = self
             .format_date(now * 1000, timezone)
             .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
-
-        // Build URL with all PVs
-        let mut url = self.build_url("getData.json", &[
+    
+        // Create base parameters
+        let base_params = [
             ("from", from_formatted.as_str()),
             ("to", to_formatted.as_str())
-        ])?;
-
-        {
-            let mut query_pairs = url.query_pairs_mut();
-            for pv in pvs {
+        ];
+    
+        let mut results = HashMap::new();
+        let mut futures = Vec::new();
+    
+        // Create a request for each PV
+        for pv in pvs {
+            let mut url = self.build_url("getData.json", &base_params)?;
+            {
+                let mut query_pairs = url.query_pairs_mut();
                 query_pairs.append_pair("pv", pv);
             }
+            
+            println!("Created request URL for {}: {}", pv, url);
+            let future = self.get::<Vec<PVData>>(url);
+            futures.push((pv.clone(), future));
         }
-
-        println!("Requesting URL: {}", url);
-
-        let response: Vec<PVData> = self.get(url).await?;
-        println!("Received response with {} PV datasets", response.len());
-
-        let mut results = HashMap::new();
-        for pv_data in response {
-            if let Some(point) = pv_data.data.last() {
-                results.insert(
-                    pv_data.meta.name,
-                    PointValue {
-                        secs: point.secs,
-                        nanos: point.nanos,
-                        val: point.val.clone(),
-                        severity: point.severity,
-                        status: point.status,
-                    },
-                );
+    
+        // Execute all requests concurrently
+        for (pv_name, future) in futures {
+            match future.await {
+                Ok(mut response) => {
+                    println!("Received data for PV {}", pv_name);
+                    if let Some(pv_data) = response.pop() {
+                        if let Some(last_point) = pv_data.data.last() {
+                            println!("Found last point for {}: {:?}", pv_name, last_point);
+    
+                            let value = match &last_point.val {
+                                Value::Single(v) => {
+                                    println!("Single value for {}: {}", pv_name, v);
+                                    *v
+                                },
+                                Value::Array(arr) if !arr.is_empty() => {
+                                    println!("Array value for {}: {:?}", pv_name, arr);
+                                    arr[0]
+                                },
+                                _ => {
+                                    println!("Invalid value format for {}", pv_name);
+                                    continue;
+                                }
+                            };
+    
+                            let point = PointValue {
+                                secs: last_point.secs,
+                                nanos: last_point.nanos,
+                                val: Value::Single(value),
+                                severity: last_point.severity,
+                                status: last_point.status,
+                            };
+    
+                            results.insert(pv_name.clone(), point);
+                            println!("Successfully added point for {}", pv_name);
+                        } else {
+                            println!("No data points found for {}", pv_name);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("Error fetching data for {}: {}", pv_name, e);
+                }
             }
         }
-
-        println!("Processed {} points of live data", results.len());
+    
+        // Verify all requested PVs are in results
+        for pv in pvs {
+            if !results.contains_key(pv) {
+                println!("WARNING: Missing data for requested PV: {}", pv);
+            }
+        }
+    
+        println!("=== Completed live data fetch ===");
+        println!("Returning data for {} PVs: {:?}", results.len(), results.keys().collect::<Vec<_>>());
+    
         Ok(results)
     }
-
 
     pub async fn ensure_tasks_stopped(&self) -> Result<(), String> {
         if self.running.load(Ordering::SeqCst) {

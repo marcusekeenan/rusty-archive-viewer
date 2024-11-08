@@ -19,7 +19,6 @@ lazy_static::lazy_static! {
         Arc::new(Mutex::new(HashMap::new()));
 }
 
-
 #[tauri::command]
 pub async fn toggle_debug_window(window: Window) -> Result<(), String> {
     let app = window.app_handle();

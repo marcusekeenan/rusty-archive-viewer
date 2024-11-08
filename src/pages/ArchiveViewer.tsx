@@ -269,95 +269,96 @@ export default function ArchiveViewer() {
                 updateIntervalMs: config.updateInterval,
                 timezone: timezone(),
                 onData: (pointValues) => {
-                  console.log("Live update received for PVs:", Object.keys(pointValues));
+                  console.log("Raw live update data:", pointValues);
+                  console.log("Current PVs:", selectedPVs().map(pv => pv.name));
               
                   setData((prev) => {
                       if (!prev?.length) return prev;
               
-                      const newData = prev.map(pvData => ({
-                          ...pvData,
-                          data: [...pvData.data]
-                      }));
+                      const newData = prev.map(pvData => {
+                          const pvName = pvData.meta.name;
+                          const newPoint = pointValues[pvName];
+                          
+                          console.log(`Processing PV ${pvName}:`, {
+                              hasUpdate: !!newPoint,
+                              currentDataPoints: pvData.data.length,
+                              newValue: newPoint ? 
+                                  (typeof newPoint.val === 'number' ? newPoint.val : 
+                                   Array.isArray(newPoint.val) ? newPoint.val[0] : null) : 
+                                  null
+                          });
               
-                      let hasUpdates = false;
-                      const currentRange = timeRange();
-                      const duration = currentRange.end.getTime() - currentRange.start.getTime();
-                      const currentTime = Date.now();
+                          if (!newPoint) {
+                              console.debug(`No new data for ${pvName}, retaining existing data:`, {
+                                  lastValue: pvData.data[pvData.data.length - 1]?.value,
+                                  totalPoints: pvData.data.length
+                              });
+                              return pvData;
+                          }
               
-                      Object.entries(pointValues).forEach(([pvName, point]) => {
-                          const pvIndex = newData.findIndex(d => d.meta.name === pvName);
-                          if (pvIndex === -1) return;
-              
-                          const value = typeof point.val === "number" 
-                              ? point.val 
-                              : Array.isArray(point.val) 
-                                  ? point.val[0] 
+                          const value = typeof newPoint.val === 'number' 
+                              ? newPoint.val 
+                              : Array.isArray(newPoint.val) 
+                                  ? newPoint.val[0] 
                                   : null;
               
-                          if (value === null) return;
+                          if (value === null) {
+                              console.warn(`Invalid value format for ${pvName}:`, newPoint.val);
+                              return pvData;
+                          }
               
-                          const timestamp = point.secs * 1000;
-                          
-                          console.log(`Adding point for ${pvName}:`, {
-                              timestamp: new Date(timestamp).toISOString(),
-                              value
-                          });
+                          console.log(`Adding new point to ${pvName}: ${value}`);
               
-                          const newPoint = {
-                              timestamp,
-                              severity: point.severity || 0,
-                              status: point.status || 0,
-                              value,
-                              min: value,
-                              max: value,
-                              stddev: 0,
-                              count: 1
+                          const timestamp = newPoint.secs * 1000 + (newPoint.nanos ? newPoint.nanos / 1_000_000 : 0);
+                          const updatedData = {
+                              ...pvData,
+                              data: [...pvData.data, {
+                                  timestamp,
+                                  severity: newPoint.severity || 0,
+                                  status: newPoint.status || 0,
+                                  value,
+                                  min: value,
+                                  max: value,
+                                  stddev: 0,
+                                  count: 1
+                              }]
                           };
               
-                          newData[pvIndex].data.push(newPoint);
-                          hasUpdates = true;
-              
-                          // Update rolling window
-                          const windowStart = currentTime - duration;
-                          newData[pvIndex].data = newData[pvIndex].data
-                              .filter(p => p.timestamp >= windowStart)
+                          // Maintain rolling window
+                          const windowDuration = timeRange().end.getTime() - timeRange().start.getTime();
+                          const cutoffTime = Date.now() - windowDuration;
+                          const oldLength = updatedData.data.length;
+                          
+                          updatedData.data = updatedData.data
+                              .filter(point => point.timestamp >= cutoffTime)
                               .sort((a, b) => a.timestamp - b.timestamp);
               
-                          // Update statistics
-                          if (newData[pvIndex].data.length > 0) {
-                              const values = newData[pvIndex].data.map(p => p.value);
-                              newData[pvIndex].statistics = {
-                                  mean: values.reduce((a, b) => a + b, 0) / values.length,
-                                  std_dev: Math.sqrt(
-                                      values.reduce((a, b) => Math.pow(b - (values.reduce((x, y) => x + y, 0) / values.length), 2), 0) / values.length
-                                  ),
-                                  min: Math.min(...values),
-                                  max: Math.max(...values),
-                                  count: values.length,
-                                  first_timestamp: newData[pvIndex].data[0].timestamp,
-                                  last_timestamp: newData[pvIndex].data[newData[pvIndex].data.length - 1].timestamp
-                              };
-                          }
+                          console.log(`Window maintenance for ${pvName}:`, {
+                              before: oldLength,
+                              after: updatedData.data.length,
+                              windowDuration,
+                              cutoffTime: new Date(cutoffTime).toISOString()
+                          });
+              
+                          return updatedData;
                       });
               
-                      if (hasUpdates) {
-                          const now = new Date(currentTime);
-                          const newStart = new Date(currentTime - duration);
-                          
-                          // Update time range
-                          console.log("Updating time range:", {
-                              start: newStart.toISOString(),
-                              end: now.toISOString()
-                          });
-                          
-                          setTimeRange({
-                              start: newStart,
-                              end: now
-                          });
-                          setLastRefresh(now);
-                      }
+                      console.log("Update summary:", newData.map(d => ({
+                          pv: d.meta.name,
+                          pointCount: d.data.length,
+                          lastValue: d.data[d.data.length - 1]?.value,
+                          timestamp: d.data[d.data.length - 1]?.timestamp
+                      })));
               
-                      return hasUpdates ? newData : prev;
+                      return newData;
+                  });
+              
+                  // Update time range
+                  const now = new Date();
+                  const duration = timeRange().end.getTime() - timeRange().start.getTime();
+                  setTimeRange({
+                      start: new Date(now.getTime() - duration),
+                      end: now
                   });
               }
             });
