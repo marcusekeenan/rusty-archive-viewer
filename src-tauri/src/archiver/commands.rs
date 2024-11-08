@@ -7,16 +7,18 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{Manager, Window, WindowBuilder, WindowUrl};
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use tokio::time::Duration;
 
+// Static references for global state
 lazy_static::lazy_static! {
     static ref ARCHIVER_CLIENT: Arc<ArchiverClient> = Arc::new(
         ArchiverClient::new().expect("Failed to create archiver client")
     );
-    static ref LIVE_SUBSCRIPTIONS: Arc<Mutex<HashMap<String, tokio::sync::broadcast::Receiver<HashMap<String, PointValue>>>>> =
+    static ref LIVE_SUBSCRIPTIONS: Arc<Mutex<HashMap<String, broadcast::Receiver<HashMap<String, PointValue>>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 }
+
 
 #[tauri::command]
 pub async fn toggle_debug_window(window: Window) -> Result<(), String> {
@@ -105,7 +107,6 @@ pub async fn fetch_data_at_time(
         .await
 }
 
-/// Start live updates for multiple PVs
 #[tauri::command]
 pub async fn start_live_updates(
     window: Window,
@@ -116,26 +117,34 @@ pub async fn start_live_updates(
     let client = ARCHIVER_CLIENT.clone();
     let window_id = window.label().to_string();
 
-    let mut subscriptions = LIVE_SUBSCRIPTIONS.lock().await;
-    if subscriptions.contains_key(&window_id) {
-        return Err("Live updates already running for this window".to_string());
+    // Stop any existing updates for this window
+    {
+        let mut subscriptions = LIVE_SUBSCRIPTIONS.lock().await;
+        subscriptions.remove(&window_id);
     }
 
-    let rx = client
-        .start_live_updates(pvs, Duration::from_millis(update_interval_ms), timezone)
+    // Start new live updates and get a receiver
+    let mut rx = client
+        .start_live_updates(
+            pvs.clone(),
+            Duration::from_millis(update_interval_ms),
+            timezone,
+        )
         .await?;
 
-    subscriptions.insert(window_id.clone(), rx);
+    // Store subscription using resubscribe()
+    {
+        let mut subscriptions = LIVE_SUBSCRIPTIONS.lock().await;
+        subscriptions.insert(window_id.clone(), rx.resubscribe());
+    }
 
-    // Spawn a task to handle the updates
+    // Handle updates in a separate task
     let window = Arc::new(window);
     tokio::spawn(async move {
-        let mut subscriptions = LIVE_SUBSCRIPTIONS.lock().await;
-        if let Some(mut rx) = subscriptions.remove(&window_id) {
-            while let Ok(data) = rx.recv().await {
-                if window.emit("live-update", &data).is_err() {
-                    break;
-                }
+        while let Ok(data) = rx.recv().await {
+            if let Err(e) = window.emit("live-update", &data) {
+                eprintln!("Failed to emit update: {}", e);
+                break;
             }
         }
     });
@@ -143,15 +152,29 @@ pub async fn start_live_updates(
     Ok(())
 }
 
-/// Stop live updates for a window
 #[tauri::command]
 pub async fn stop_live_updates(window: Window) -> Result<(), String> {
     let window_id = window.label().to_string();
-    let mut subscriptions = LIVE_SUBSCRIPTIONS.lock().await;
-    subscriptions.remove(&window_id);
+    println!("Stopping live updates for window: {}", window_id);
 
+    // First, remove subscription
+    {
+        let mut subscriptions = LIVE_SUBSCRIPTIONS.lock().await;
+        subscriptions.remove(&window_id);
+    }
+
+    // Stop the client
     let client = ARCHIVER_CLIENT.clone();
-    client.stop_live_updates().await
+    client.stop_live_updates().await?;
+
+    // Wait a moment to ensure cleanup
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Double check that all tasks are stopped
+    client.ensure_tasks_stopped().await?;
+
+    println!("Live updates stopped for window: {}", window_id);
+    Ok(())
 }
 
 /// Exports data in various formats

@@ -7,8 +7,11 @@ use futures::future::join_all;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::Notify;
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
+use tokio::task::JoinHandle;
 use tokio::time::{Duration, Interval};
 use url::Url;
 
@@ -101,6 +104,9 @@ pub struct ArchiverClient {
     data_cache: Arc<RwLock<HashMap<String, NormalizedPVData>>>,
     live_update_tx: Arc<Mutex<Option<broadcast::Sender<HashMap<String, PointValue>>>>>,
     live_interval: Arc<Mutex<Option<Interval>>>,
+    live_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    running: Arc<AtomicBool>,
+    shutdown_signal: Arc<Notify>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -134,16 +140,16 @@ impl DataProcessor {
         if chunks.is_empty() {
             return Err(ERRORS.no_data.to_string());
         }
-    
+
         let mut all_points = Vec::new();
         let meta = chunks[0].meta.clone();
-    
+
         for chunk in chunks {
             for point in chunk.data {
                 if let Some(value) = point.value_as_f64() {
                     // The timestamp is already in the correct timezone from the API
                     let timestamp = point.secs * 1000 + point.nanos.unwrap_or(0) / 1_000_000;
-    
+
                     all_points.push(ProcessedPoint {
                         timestamp,
                         severity: point.severity.unwrap_or(0),
@@ -157,10 +163,10 @@ impl DataProcessor {
                 }
             }
         }
-    
+
         all_points.sort_by_key(|p| p.timestamp);
         all_points.dedup_by_key(|p| p.timestamp);
-    
+
         Ok(NormalizedPVData {
             meta,
             data: all_points.clone(),
@@ -187,7 +193,15 @@ impl ArchiverClient {
             data_cache: Arc::new(RwLock::new(HashMap::new())),
             live_update_tx: Arc::new(Mutex::new(None)),
             live_interval: Arc::new(Mutex::new(None)),
+            live_task: Arc::new(Mutex::new(None)),
+            running: Arc::new(AtomicBool::new(false)),
+            shutdown_signal: Arc::new(Notify::new()),
         })
+    }
+
+    pub async fn is_live_task_running(&self) -> bool {
+        let task_lock = self.live_task.lock().await;
+        task_lock.is_some()
     }
 
     fn format_date(&self, timestamp_ms: i64, timezone: Option<&str>) -> Option<String> {
@@ -344,108 +358,190 @@ impl ArchiverClient {
                 .ok_or_else(|| ERRORS.no_data.to_string())
         })
     }
-
+    
     pub async fn start_live_updates(
         &self,
         pvs: Vec<String>,
         update_interval: Duration,
         timezone: Option<String>,
     ) -> Result<broadcast::Receiver<HashMap<String, PointValue>>, String> {
-        let mut interval_lock = self.live_interval.lock().await;
-        let mut tx_lock = self.live_update_tx.lock().await;
+        println!("Starting live updates with interval {:?}", update_interval);
 
-        if interval_lock.is_some() {
-            return Err("Live updates already running".to_string());
+        // Reset state
+        self.running.store(true, Ordering::SeqCst);
+        
+        // Create new channel with larger buffer
+        let (tx, rx) = broadcast::channel(100);
+        
+        {
+            let mut tx_lock = self.live_update_tx.lock().await;
+            *tx_lock = Some(tx.clone());
         }
-
-        let (tx, rx) = broadcast::channel(32);
-        *tx_lock = Some(tx.clone());
-
-        let interval = tokio::time::interval(update_interval);
-        *interval_lock = Some(interval);
 
         let client = self.clone();
         let pvs = Arc::new(pvs);
         let timezone = Arc::new(timezone);
+        let shutdown = self.shutdown_signal.clone();
+        let running = self.running.clone();
 
-        tokio::spawn(async move {
+        println!("Creating live update task for PVs: {:?}", pvs);
+        
+        let task = tokio::spawn(async move {
+            println!("Live update task started");
             let mut interval = tokio::time::interval(update_interval);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-            loop {
-                interval.tick().await;
-
-                match client.fetch_live_data(&pvs, timezone.as_deref()).await {
-                    Ok(data) => {
-                        if tx.receiver_count() == 0 {
-                            break;
-                        }
-                        if tx.send(data).is_err() {
-                            break;
-                        }
-                    }
-                    Err(e) => eprintln!("Error fetching live data: {}", e),
+            // Initial fetch
+            if let Ok(initial_data) = client.fetch_live_data(&pvs, timezone.as_deref()).await {
+                println!("Initial data fetch successful: {} points", initial_data.len());
+                if let Err(e) = tx.send(initial_data) {
+                    println!("Error sending initial data: {}", e);
                 }
             }
+
+            while running.load(Ordering::SeqCst) {
+                tokio::select! {
+                    _ = shutdown.notified() => {
+                        println!("Shutdown signal received in live update task");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        println!("Tick received, fetching live data");
+                        match client.fetch_live_data(&pvs, timezone.as_deref()).await {
+                            Ok(data) => {
+                                if !data.is_empty() {
+                                    println!("Fetched {} points of live data", data.len());
+                                    match tx.send(data) {
+                                        Ok(_) => println!("Live data sent successfully"),
+                                        Err(e) => {
+                                            println!("Error sending live data: {}", e);
+                                            if tx.receiver_count() == 0 {
+                                                println!("No receivers left, breaking loop");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    println!("No live data received");
+                                }
+                            }
+                            Err(e) => {
+                                println!("Error fetching live data: {}", e);
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                            }
+                        }
+                    }
+                }
+            }
+            println!("Live update task ending gracefully");
         });
 
+        {
+            let mut task_lock = self.live_task.lock().await;
+            *task_lock = Some(task);
+            println!("Live update task stored");
+        }
+
+        println!("Live updates started successfully");
         Ok(rx)
     }
 
     pub async fn stop_live_updates(&self) -> Result<(), String> {
-        let mut interval_lock = self.live_interval.lock().await;
-        let mut tx_lock = self.live_update_tx.lock().await;
-        *interval_lock = None;
-        *tx_lock = None;
+        println!("Stopping live updates...");
+        
+        // Set running to false first
+        self.running.store(false, Ordering::SeqCst);
+        
+        // Signal shutdown
+        self.shutdown_signal.notify_waiters();
+        println!("Shutdown signal sent");
+
+        // Clear transmitter
+        {
+            let mut tx_lock = self.live_update_tx.lock().await;
+            *tx_lock = None;
+            println!("Transmitter cleared");
+        }
+
+        // Wait for task to complete
+        {
+            let mut task_lock = self.live_task.lock().await;
+            if let Some(mut task) = task_lock.take() {
+                println!("Waiting for task to complete...");
+                if !task.is_finished() {
+                    match tokio::time::timeout(Duration::from_secs(2), &mut task).await {
+                        Ok(join_result) => {
+                            if let Err(e) = join_result {
+                                println!("Task ended with error: {}", e);
+                            } else {
+                                println!("Task completed successfully");
+                            }
+                        }
+                        Err(_) => {
+                            println!("Task cleanup timed out, aborting");
+                            task.abort();
+                        }
+                    }
+                }
+                println!("Task completed");
+            }
+        }
+
+        // Clear interval
+        {
+            let mut interval_lock = self.live_interval.lock().await;
+            *interval_lock = None;
+            println!("Interval cleared");
+        }
+
+        println!("Live updates stopped successfully");
         Ok(())
     }
 
     pub async fn fetch_live_data(
-    &self,
-    pvs: &[String],
-    timezone: Option<&str>,
-) -> Result<HashMap<String, PointValue>, String> {
-    if pvs.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    // Instead of exact timestamp, use a small time window up to now
-    let now = Utc::now().timestamp();
-    let five_seconds_ago = now - 5; // 5 second window
-
-    let from_formatted = self
-        .format_date(five_seconds_ago * 1000, timezone)
-        .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
-    let to_formatted = self
-        .format_date(now * 1000, timezone)
-        .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
-
-    let mut params = vec![
-        ("from", from_formatted.as_str()),
-        ("to", to_formatted.as_str())
-    ];
-
-    if let Some(tz) = timezone {
-        params.push(("timeZone", tz));
-    }
-
-    let mut url = self.build_url("getData.json", &params)?;
-
-    {
-        let mut query_pairs = url.query_pairs_mut();
-        for pv in pvs {
-            query_pairs.append_pair("pv", pv);
+        &self,
+        pvs: &[String],
+        timezone: Option<&str>,
+    ) -> Result<HashMap<String, PointValue>, String> {
+        if pvs.is_empty() {
+            return Ok(HashMap::new());
         }
-    }
 
-    let response: Vec<PVData> = self.get(url).await?;
-    
-    // Take the latest point for each PV
-    Ok(response
-        .into_iter()
-        .filter_map(|pv_data| {
-            pv_data.data.last().map(|point| {
-                (
-                    pv_data.meta.name.clone(),
+        println!("Fetching live data for PVs: {:?}", pvs);
+
+        let now = Utc::now().timestamp();
+        let five_seconds_ago = now - 5;
+
+        let from_formatted = self
+            .format_date(five_seconds_ago * 1000, timezone)
+            .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
+        let to_formatted = self
+            .format_date(now * 1000, timezone)
+            .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
+
+        // Build URL with all PVs
+        let mut url = self.build_url("getData.json", &[
+            ("from", from_formatted.as_str()),
+            ("to", to_formatted.as_str())
+        ])?;
+
+        {
+            let mut query_pairs = url.query_pairs_mut();
+            for pv in pvs {
+                query_pairs.append_pair("pv", pv);
+            }
+        }
+
+        println!("Requesting URL: {}", url);
+
+        let response: Vec<PVData> = self.get(url).await?;
+        println!("Received response with {} PV datasets", response.len());
+
+        let mut results = HashMap::new();
+        for pv_data in response {
+            if let Some(point) = pv_data.data.last() {
+                results.insert(
+                    pv_data.meta.name,
                     PointValue {
                         secs: point.secs,
                         nanos: point.nanos,
@@ -453,11 +549,31 @@ impl ArchiverClient {
                         severity: point.severity,
                         status: point.status,
                     },
-                )
-            })
-        })
-        .collect())
-}
+                );
+            }
+        }
+
+        println!("Processed {} points of live data", results.len());
+        Ok(results)
+    }
+
+
+    pub async fn ensure_tasks_stopped(&self) -> Result<(), String> {
+        if self.running.load(Ordering::SeqCst) {
+            return Err("Live updates still running".to_string());
+        }
+
+        let task_exists = {
+            let task_lock = self.live_task.lock().await;
+            task_lock.is_some()
+        };
+
+        if task_exists {
+            return Err("Task still exists".to_string());
+        }
+
+        Ok(())
+    }
 
     pub async fn fetch_data_at_time(
         &self,
@@ -540,6 +656,9 @@ impl Clone for ArchiverClient {
             data_cache: self.data_cache.clone(),
             live_update_tx: self.live_update_tx.clone(),
             live_interval: self.live_interval.clone(),
+            live_task: self.live_task.clone(),
+            running: self.running.clone(),
+            shutdown_signal: self.shutdown_signal.clone(),
         }
     }
 }

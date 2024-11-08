@@ -100,12 +100,14 @@ export class LiveUpdateManager {
     
     async start(config: LiveUpdateConfig): Promise<void> {
         if (this.isActive) {
-            throw new Error("Live updates already running");
+            await this.stop();
         }
         
         this.isActive = true;
         
         try {
+            console.log("Starting live updates for PVs:", config.pvs);
+            
             // Start the backend polling
             await invoke("start_live_updates", {
                 pvs: config.pvs,
@@ -118,19 +120,11 @@ export class LiveUpdateManager {
                 "live-update",
                 (event) => {
                     if (this.isActive) {
+                        console.log("Received update:", event.payload);
                         config.onData(event.payload);
                     }
                 }
             );
-            
-            // Listen for errors if handler provided
-            if (config.onError) {
-                await listen("live-update-error", (event) => {
-                    if (this.isActive && config.onError) {
-                        config.onError(event.payload as string);
-                    }
-                });
-            }
         } catch (error) {
             this.isActive = false;
             throw error;
@@ -138,22 +132,43 @@ export class LiveUpdateManager {
     }
     
     async stop(): Promise<void> {
+        console.log("Stopping LiveUpdateManager");
+        this.isActive = false;
+        
         try {
-            console.log("LiveUpdateManager: Stopping...");
+            // Stop backend first
+            try {
+                await invoke("stop_live_updates");
+            } catch (error) {
+                console.error("Error stopping backend updates:", error);
+            }
+            
+            // Always clean up listener
             if (this.unlistenFn) {
                 await this.unlistenFn();
                 this.unlistenFn = undefined;
-                console.log("LiveUpdateManager: Unlisten function cleared");
             }
-            await invoke("stop_live_updates");
-            console.log("LiveUpdateManager: Backend stopped");
+
+            console.log("LiveUpdateManager stopped successfully");
         } catch (error) {
-            console.error("LiveUpdateManager: Error during stop:", error);
+            console.error("Error in LiveUpdateManager stop:", error);
+            // Still try to clean up listener on error
+            if (this.unlistenFn) {
+                try {
+                    await this.unlistenFn();
+                } catch (e) {
+                    console.error("Error cleaning up listener:", e);
+                }
+                this.unlistenFn = undefined;
+            }
             throw error;
         }
     }
-}
 
+    isRunning(): boolean {
+        return this.isActive;
+    }
+}
 /**
  * Fetches historical data with automatic optimization
  */

@@ -228,230 +228,199 @@ export default function ArchiveViewer() {
     
     try {
         if (newEnabled) {
-            // Check for selected PVs
-            if (!selectedPVs().length) {
+            // Starting live mode
+            const pvs = selectedPVs();
+            if (!pvs.length) {
                 throw new Error("No PVs selected");
             }
 
-            // Create new live manager
-            if (liveManager) {
-                await liveManager.stop();
-            }
+            // Create new manager
             liveManager = new LiveUpdateManager();
             
-            // Set enabled state after validation
-            setRealTimeConfig((prev) => ({ ...prev, enabled: true }));
+            // Set enabled state
+            setRealTimeConfig(prev => ({ ...prev, enabled: true }));
             
-            // Preserve the current time range duration
             const currentRange = timeRange();
             const duration = currentRange.end.getTime() - currentRange.start.getTime();
             
-            addDebugLog("Starting live mode", "info", {
-                currentRange: {
-                    start: currentRange.start.toISOString(),
-                    end: currentRange.end.toISOString(),
-                },
-                duration,
-                interval: config.updateInterval,
-                selectedPVs: selectedPVs().map(pv => pv.name)
-            });
+            console.log("Starting live mode for PVs:", pvs.map(pv => pv.name));
 
-            // Initial data fetch for all PVs
+            // Initial data fetch
             const initialData = await fetchData(
-                selectedPVs().map(pv => pv.name),
+                pvs.map(pv => pv.name),
                 currentRange.start,
                 currentRange.end,
                 chartWidth(),
                 timezone()
             );
 
-            if (!initialData || !Array.isArray(initialData) || initialData.length === 0) {
+            if (!initialData?.length) {
                 throw new Error("Failed to fetch initial data");
             }
 
-            // Set initial data with PV properties
             setData(initialData.map((pvData, index) => ({
                 ...pvData,
-                pen: selectedPVs()[index].pen
+                pen: pvs[index].pen
             })));
 
             // Start live updates
             await liveManager.start({
-                pvs: selectedPVs().map(pv => pv.name),
+                pvs: pvs.map(pv => pv.name),
                 updateIntervalMs: config.updateInterval,
                 timezone: timezone(),
                 onData: (pointValues) => {
-                    if (!Object.keys(pointValues).length) {
-                        addDebugLog("Received empty point values", "debug");
-                        return;
-                    }
-
-                    addDebugLog("Received live data update", "debug", {
-                        timestamp: new Date().toISOString(),
-                        points: Object.keys(pointValues)
-                    });
-
-                    setData((prev) => {
-                        if (!prev || !prev.length) {
-                            addDebugLog("No previous data to update", "error");
-                            return prev;
-                        }
-
-                        // Create deep copy of previous data
-                        const newData = [...prev];
-                        let hasUpdates = false;
-
-                        // Update each PV that received new data
-                        Object.entries(pointValues).forEach(([pvName, point]) => {
-                            // Find the PV in our data array
-                            const pvData = newData.find(d => d.meta.name === pvName);
-                            if (!pvData) {
-                                addDebugLog(`PV ${pvName} not found in current data`, "error");
-                                return;
-                            }
-
-                            const value = typeof point.val === "number" 
-                                ? point.val 
-                                : Array.isArray(point.val) 
-                                    ? point.val[0] 
-                                    : null;
-
-                            if (value !== null) {
-                                const timestamp = point.secs * 1000;
-                                
-                                const newPoint = {
-                                    timestamp,
-                                    severity: point.severity || 0,
-                                    status: point.status || 0,
-                                    value,
-                                    min: value,
-                                    max: value,
-                                    stddev: 0,
-                                    count: 1,
-                                };
-
-                                // Clone the data array for this PV
-                                pvData.data = [...pvData.data, newPoint];
-                                hasUpdates = true;
-
-                                // Maintain the rolling window
-                                const now = Date.now();
-                                const duration = timeRange().end.getTime() - timeRange().start.getTime();
-                                const windowStart = now - duration;
-                                
-                                // Filter and sort data
-                                pvData.data = pvData.data
-                                    .filter(point => point.timestamp >= windowStart)
-                                    .sort((a, b) => a.timestamp - b.timestamp);
-
-                                // Update statistics
-                                if (pvData.data.length > 0) {
-                                    const values = pvData.data.map(p => p.value);
-                                    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-                                    const stdDev = Math.sqrt(
-                                        values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length
-                                    );
-
-                                    pvData.statistics = {
-                                        mean,
-                                        std_dev: stdDev,
-                                        min: Math.min(...values),
-                                        max: Math.max(...values),
-                                        count: values.length,
-                                        first_timestamp: pvData.data[0].timestamp,
-                                        last_timestamp: pvData.data[pvData.data.length - 1].timestamp
-                                    };
-                                }
-                            }
-                        });
-
-                        if (hasUpdates) {
-                            const now = new Date();
-                            const duration = timeRange().end.getTime() - timeRange().start.getTime();
-                            const newStart = new Date(now.getTime() - duration);
-                            
-                            setTimeRange({
-                                start: newStart,
-                                end: now
-                            });
-                            setLastRefresh(now);
-
-                            addDebugLog("Updated data state", "debug", {
-                                pvCount: newData.length,
-                                timeRange: {
-                                    start: newStart.toISOString(),
-                                    end: now.toISOString()
-                                }
-                            });
-                        }
-
-                        return newData;
-                    });
-                },
-                onError: (error) => {
-                    addDebugLog("Live update error", "error", { error });
-                    setError(error);
-                    setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
-                }
+                  console.log("Live update received for PVs:", Object.keys(pointValues));
+              
+                  setData((prev) => {
+                      if (!prev?.length) return prev;
+              
+                      const newData = prev.map(pvData => ({
+                          ...pvData,
+                          data: [...pvData.data]
+                      }));
+              
+                      let hasUpdates = false;
+                      const currentRange = timeRange();
+                      const duration = currentRange.end.getTime() - currentRange.start.getTime();
+                      const currentTime = Date.now();
+              
+                      Object.entries(pointValues).forEach(([pvName, point]) => {
+                          const pvIndex = newData.findIndex(d => d.meta.name === pvName);
+                          if (pvIndex === -1) return;
+              
+                          const value = typeof point.val === "number" 
+                              ? point.val 
+                              : Array.isArray(point.val) 
+                                  ? point.val[0] 
+                                  : null;
+              
+                          if (value === null) return;
+              
+                          const timestamp = point.secs * 1000;
+                          
+                          console.log(`Adding point for ${pvName}:`, {
+                              timestamp: new Date(timestamp).toISOString(),
+                              value
+                          });
+              
+                          const newPoint = {
+                              timestamp,
+                              severity: point.severity || 0,
+                              status: point.status || 0,
+                              value,
+                              min: value,
+                              max: value,
+                              stddev: 0,
+                              count: 1
+                          };
+              
+                          newData[pvIndex].data.push(newPoint);
+                          hasUpdates = true;
+              
+                          // Update rolling window
+                          const windowStart = currentTime - duration;
+                          newData[pvIndex].data = newData[pvIndex].data
+                              .filter(p => p.timestamp >= windowStart)
+                              .sort((a, b) => a.timestamp - b.timestamp);
+              
+                          // Update statistics
+                          if (newData[pvIndex].data.length > 0) {
+                              const values = newData[pvIndex].data.map(p => p.value);
+                              newData[pvIndex].statistics = {
+                                  mean: values.reduce((a, b) => a + b, 0) / values.length,
+                                  std_dev: Math.sqrt(
+                                      values.reduce((a, b) => Math.pow(b - (values.reduce((x, y) => x + y, 0) / values.length), 2), 0) / values.length
+                                  ),
+                                  min: Math.min(...values),
+                                  max: Math.max(...values),
+                                  count: values.length,
+                                  first_timestamp: newData[pvIndex].data[0].timestamp,
+                                  last_timestamp: newData[pvIndex].data[newData[pvIndex].data.length - 1].timestamp
+                              };
+                          }
+                      });
+              
+                      if (hasUpdates) {
+                          const now = new Date(currentTime);
+                          const newStart = new Date(currentTime - duration);
+                          
+                          // Update time range
+                          console.log("Updating time range:", {
+                              start: newStart.toISOString(),
+                              end: now.toISOString()
+                          });
+                          
+                          setTimeRange({
+                              start: newStart,
+                              end: now
+                          });
+                          setLastRefresh(now);
+                      }
+              
+                      return hasUpdates ? newData : prev;
+                  });
+              }
             });
-            
-        } else {
-            // Stopping live mode
-            addDebugLog("Stopping live mode", "info");
-            
-            if (liveManager) {
-                await liveManager.stop();
-                liveManager = undefined;
-            }
-
-            // Set disabled state after stopping
-            setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
-
-            // Preserve the current time range duration when stopping
-            const currentRange = timeRange();
-            const duration = currentRange.end.getTime() - currentRange.start.getTime();
-            const now = new Date();
-            const newStart = new Date(now.getTime() - duration);
-            
-            setTimeRange({
-                start: newStart,
-                end: now
-            });
-
-            // Fetch final state for all PVs
-            const finalData = await fetchData(
-                selectedPVs().map(pv => pv.name),
-                newStart,
-                now,
-                chartWidth(),
-                timezone()
-            );
-
-            if (finalData && Array.isArray(finalData) && finalData.length > 0) {
-                setData(finalData.map((pvData, index) => ({
-                    ...pvData,
-                    pen: selectedPVs()[index].pen
-                })));
-            }
-            
-            addDebugLog("Live updates stopped successfully", "info");
-        }
-    } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        setError(errorMessage);
-        addDebugLog("Live update operation failed", "error", { 
-            error: errorMessage,
-            state: newEnabled ? "starting" : "stopping"
-        });
-        
-        // Ensure clean state on error
-        setRealTimeConfig((prev) => ({ ...prev, enabled: false }));
-        if (liveManager) {
-            await liveManager.stop();
-            liveManager = undefined;
-        }
-    }
-};
+          } else {
+              // Stopping live mode
+              console.log("Stopping live mode");
+              setRealTimeConfig(prev => ({ ...prev, enabled: false }));
+              
+              if (liveManager) {
+                  await liveManager.stop();
+                  liveManager = undefined;
+              }
+  
+              // Fetch final state after stopping
+              const currentRange = timeRange();
+              const duration = currentRange.end.getTime() - currentRange.start.getTime();
+              const now = new Date();
+              const newStart = new Date(now.getTime() - duration);
+  
+              // Update the time range
+              setTimeRange({
+                  start: newStart,
+                  end: now
+              });
+  
+              // Fetch final state
+              const pvs = selectedPVs();
+              if (pvs.length) {
+                  try {
+                      const finalData = await fetchData(
+                          pvs.map(pv => pv.name),
+                          newStart,
+                          now,
+                          chartWidth(),
+                          timezone()
+                      );
+  
+                      if (finalData?.length) {
+                          setData(finalData.map((pvData, index) => ({
+                              ...pvData,
+                              pen: pvs[index].pen
+                          })));
+                      }
+                  } catch (error) {
+                      console.error("Error fetching final state:", error);
+                  }
+              }
+          }
+      } catch (error) {
+          console.error("Live mode error:", error);
+          // Clean up on error
+          setRealTimeConfig(prev => ({ ...prev, enabled: false }));
+          if (liveManager) {
+              try {
+                  await liveManager.stop();
+              } catch (stopError) {
+                  console.error("Error stopping live manager:", stopError);
+              }
+              liveManager = undefined;
+          }
+          setError(error instanceof Error ? error.message : String(error));
+      }
+  };
 
   // Cleanup
   onCleanup(async () => {
