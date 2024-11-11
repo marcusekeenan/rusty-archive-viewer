@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
-import type { PenProperties } from './types';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./dialog";
+import type { PenProperties } from '../../../../types';
 
 type PenPropertiesDialogProps = {
   isOpen: boolean;

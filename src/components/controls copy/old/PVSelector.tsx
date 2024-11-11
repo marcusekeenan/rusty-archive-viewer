@@ -3,7 +3,7 @@ import { createSignal, For } from "solid-js";
 import type { PVWithProperties, PenProperties } from "./types";
 import { DEFAULT_PEN_PROPERTIES } from "./types";
 import { getNextColor } from "./colors";
-import PenPropertiesDialog from "./PenPropertiesDialog";
+import PenPropertiesDialog from "./old/PenPropertiesDialog";
 import PVListItem from "./PVListItem";
 
 type PVSelectorProps = {

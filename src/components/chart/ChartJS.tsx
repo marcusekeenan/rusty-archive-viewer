@@ -16,7 +16,7 @@ import {
 } from 'chart.js';
 import zoomPlugin from 'chartjs-plugin-zoom';
 import 'chartjs-adapter-date-fns';
-import type { PVWithProperties, PenProperties } from '../controls/types';
+import type { PVWithProperties, PenProperties } from '../../../src/types'
 
 // Register Chart.js components
 ChartJS.register(
@@ -37,6 +37,7 @@ type EPICSChartProps = {
   pvs: PVWithProperties[];
   timeRange: { start: Date; end: Date };
   timezone: string;
+  
 };
 
 interface ChartPoint {

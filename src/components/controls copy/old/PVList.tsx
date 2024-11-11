@@ -1,6 +1,6 @@
 // PVList.tsx
 import { For } from "solid-js";
-import type { PVWithProperties } from "./types";
+import type { PVWithProperties } from "../../../types";
 import PVListItem from "./PVListItem";
 
 type PVListProps = {

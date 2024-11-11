@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use env_logger;
+use log::{debug, error, info, warn};
 use rusty_archive_viewer::archiver::{
     commands::*,
     constants::ERRORS,
@@ -9,8 +11,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{Manager, State, Window};
 use tokio::sync::Semaphore;
-use log::{debug, error, info, warn};
-use env_logger;
 
 // Track active connections for resource management
 struct ConnectionCounter(Arc<AtomicUsize>);
@@ -21,7 +21,7 @@ struct RateLimiter(Arc<Semaphore>);
 /// Main entry point for the application
 fn main() {
     let context = tauri::generate_context!();
-    
+
     // Initialize connection counter and rate limiter
     let connection_counter = ConnectionCounter(Arc::new(AtomicUsize::new(0)));
     let rate_limiter = RateLimiter(Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)));
@@ -36,10 +36,10 @@ fn main() {
             fetch_data,         // Historical data fetching
             fetch_data_at_time, // Point-in-time data retrieval
             // Metadata and validation
-            get_pv_metadata,    // PV metadata retrieval
-            validate_pvs,       // PV name validation
-            get_pv_status,      // PV status checking
-            test_connection,    // Connection testing
+            get_pv_metadata, // PV metadata retrieval
+            validate_pvs,    // PV name validation
+            get_pv_status,   // PV status checking
+            test_connection, // Connection testing
             // Utility commands
             export_data,         // Data export functionality
             toggle_debug_window, // Debug interface toggle
@@ -48,7 +48,7 @@ fn main() {
         .setup(|app| {
             // Initialize logger
             setup_logging();
-            
+
             // Configure main window
             if let Some(window) = app.get_window("main") {
                 #[cfg(debug_assertions)]
@@ -78,10 +78,10 @@ fn main() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
                 #[cfg(debug_assertions)]
                 log::info!("Window close requested");
-                
+
                 // Allow the window to close
                 api.prevent_close();
-                
+
                 // Clean up resources
                 let window = event.window().clone();
                 tokio::spawn(async move {
@@ -129,24 +129,23 @@ fn handle_window_event(event: &tauri::WindowEvent) {
 /// Cleans up resources before window close
 async fn cleanup_resources(window: Window) -> Result<(), String> {
     log::info!("Cleaning up resources for window: {}", window.label());
-    
+
     // Perform any necessary cleanup here
     // No more live updates to clean up as they're handled by the frontend
-    
+
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_connection_counter() {
         let counter = ConnectionCounter(Arc::new(AtomicUsize::new(0)));
         assert_eq!(counter.0.load(Ordering::SeqCst), 0);
     }
-    
+
     #[test]
     fn test_rate_limiter() {
         let limiter = RateLimiter(Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)));

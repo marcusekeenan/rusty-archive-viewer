@@ -17,13 +17,8 @@ use crate::archiver::types::*;
 /// Defines how time ranges are specified for data retrieval
 #[derive(Debug, Clone)]
 pub enum TimeRangeMode {
-    Fixed {
-        start: i64,
-        end: i64,
-    },
-    Rolling {
-        duration: Duration,
-    },
+    Fixed { start: i64, end: i64 },
+    Rolling { duration: Duration },
 }
 
 impl TimeRangeMode {
@@ -53,8 +48,8 @@ impl OptimizationLevel {
             OptimizationLevel::Raw => DataOperator::Raw,
             OptimizationLevel::Optimized(points) => DataOperator::Optimized(*points),
             OptimizationLevel::Auto => {
-                let points_per_pixel = chart_width
-                    .map_or(duration as f64 / 1000.0, |w| duration as f64 / w as f64);
+                let points_per_pixel =
+                    chart_width.map_or(duration as f64 / 1000.0, |w| duration as f64 / w as f64);
 
                 if points_per_pixel <= 1.0 {
                     DataOperator::Raw
@@ -349,7 +344,10 @@ impl ArchiverClient {
             .format_date(now * 1000, timezone)
             .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
 
-        let base_params = [("from", from_formatted.as_str()), ("to", to_formatted.as_str())];
+        let base_params = [
+            ("from", from_formatted.as_str()),
+            ("to", to_formatted.as_str()),
+        ];
 
         let mut results = HashMap::new();
 
@@ -486,7 +484,7 @@ mod tests {
 
         assert!(result.is_ok());
         let data = result.unwrap();
-        
+
         // Verify data points are within the rolling window
         let now = Utc::now().timestamp() * 1000;
         let window_start = now - 3600000;
@@ -556,7 +554,7 @@ mod tests {
 
             assert!(result.is_ok());
             let data = result.unwrap();
-            
+
             match optimization {
                 OptimizationLevel::Raw => {
                     // Raw data should have more points
@@ -577,7 +575,7 @@ mod tests {
     #[tokio::test]
     async fn test_error_handling() {
         let client = ArchiverClient::new().unwrap();
-        
+
         // Test invalid PV
         let mode = TimeRangeMode::Fixed {
             start: Utc::now().timestamp() - 3600,

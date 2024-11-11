@@ -26,18 +26,18 @@ pub use commands::{
 
 // Re-export core functionality from API
 pub use api::{
-    ArchiverClient,     // Stateless client for archiver interaction
-    DataProcessor,      // Data processing utilities
-    DataRequest,        // Request configuration structures
-    OptimizationLevel,  // Data optimization strategies
-    TimeRangeMode,      // Time range specification options
+    ArchiverClient,    // Stateless client for archiver interaction
+    DataProcessor,     // Data processing utilities
+    DataRequest,       // Request configuration structures
+    OptimizationLevel, // Data optimization strategies
+    TimeRangeMode,     // Time range specification options
 };
 
 // Re-export types and constants
 pub use constants::{
-    API_CONFIG,  // API configuration constants
-    ERRORS,      // Error message constants
-    OPERATORS,   // Available data operators
+    API_CONFIG, // API configuration constants
+    ERRORS,     // Error message constants
+    OPERATORS,  // Available data operators
 };
 pub use types::*;
 
@@ -48,7 +48,7 @@ pub const MIN_SUPPORTED_API_VERSION: &str = "1.0.0";
 /// Basic usage example:
 /// ```rust,no_run
 /// use rusty_archive_viewer::archiver::{ArchiverClient, TimeRangeMode, OptimizationLevel};
-/// 
+///
 /// async fn example() -> Result<(), String> {
 ///     let client = ArchiverClient::new()?;
 ///     let mode = TimeRangeMode::Fixed {
@@ -85,10 +85,10 @@ pub fn _legacy_helper() {}
 pub mod features {
     /// Indicates whether debug features are enabled
     pub const DEBUG_ENABLED: bool = cfg!(debug_assertions);
-    
+
     /// Maximum number of concurrent requests
     pub const MAX_CONCURRENT_REQUESTS: usize = 10;
-    
+
     /// Default chart width for optimization calculations
     pub const DEFAULT_CHART_WIDTH: i32 = 1000;
 }
@@ -96,7 +96,7 @@ pub mod features {
 /// Utility functions for common operations
 pub mod utils {
     use chrono::{DateTime, TimeZone, Utc};
-    
+
     /// Converts a timestamp to a formatted string
     pub fn format_timestamp(ts: i64) -> String {
         if let Some(dt) = Utc.timestamp_millis_opt(ts).single() {
@@ -105,7 +105,7 @@ pub mod utils {
             "Invalid timestamp".to_string()
         }
     }
-    
+
     /// Validates a time range
     pub fn validate_time_range(start: i64, end: i64) -> bool {
         start < end && start > 0 && end > 0

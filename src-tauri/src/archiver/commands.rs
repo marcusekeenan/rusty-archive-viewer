@@ -64,7 +64,7 @@ pub async fn fetch_data(
         let client = client.clone();
         let mode = mode.clone();
         let timezone = timezone.clone();
-        
+
         async move {
             match client
                 .fetch_data(
@@ -110,9 +110,7 @@ pub async fn fetch_data_at_time(
 ) -> Result<HashMap<String, PointValue>, String> {
     let client = create_client()?;
 
-    client
-        .fetch_current_values(&pvs, timezone.as_deref())
-        .await
+    client.fetch_current_values(&pvs, timezone.as_deref()).await
 }
 
 /// Exports data in various formats
@@ -251,38 +249,45 @@ mod tests {
     #[tokio::test]
     async fn test_get_pv_metadata() {
         let result = get_pv_metadata(TEST_PV.to_string()).await;
-        
+
         match result {
             Ok(meta) => {
                 assert_eq!(meta.name, TEST_PV);
                 assert!(!meta.egu.is_empty(), "Units should not be empty");
-                
+
                 // Optional field checks
                 if let Some(precision) = meta.precision {
                     assert!(precision >= 0, "Precision should be non-negative");
                 }
-                
+
                 if let Some(params) = meta.archive_parameters {
-                    assert!(params.sampling_period > 0.0, "Sampling period should be positive");
+                    assert!(
+                        params.sampling_period > 0.0,
+                        "Sampling period should be positive"
+                    );
                 }
-                
+
                 println!("Metadata test passed successfully");
-            },
+            }
             Err(e) => {
-                println!("Metadata fetch returned expected error for {}: {}", TEST_PV, e);
-                
+                println!(
+                    "Metadata fetch returned expected error for {}: {}",
+                    TEST_PV, e
+                );
+
                 // Updated error patterns to match actual server responses
                 assert!(
                     e.contains("Failed to fetch metadata") || 
                     e.contains("Connection") || 
                     e.contains("No metadata") ||
                     e.contains("Server error") ||  // Added server error pattern
-                    e.contains("Bad Request"),     // Added bad request pattern
-                    "Unexpected error format: {}", e
+                    e.contains("Bad Request"), // Added bad request pattern
+                    "Unexpected error format: {}",
+                    e
                 );
             }
         }
-        
+
         // Test invalid PV - should return error
         let invalid_result = get_pv_metadata(TEST_INVALID_PV.to_string()).await;
         assert!(invalid_result.is_err(), "Invalid PV should return error");
@@ -292,8 +297,9 @@ mod tests {
                 e.contains("Invalid") || 
                 e.contains("No metadata") ||
                 e.contains("Server error") ||  // Added server error pattern
-                e.contains("Bad Request"),     // Added bad request pattern
-                "Unexpected error format for invalid PV: {}", e
+                e.contains("Bad Request"), // Added bad request pattern
+                "Unexpected error format for invalid PV: {}",
+                e
             );
         }
     }
@@ -307,12 +313,14 @@ mod tests {
             "Server error",
             "Bad Request",
             "Invalid",
-            "400",  // Common HTTP error code
-            "404",  // Common HTTP error code
-            "503",  // Service unavailable
+            "400", // Common HTTP error code
+            "404", // Common HTTP error code
+            "503", // Service unavailable
         ];
 
-        expected_patterns.iter().any(|&pattern| error.contains(pattern))
+        expected_patterns
+            .iter()
+            .any(|&pattern| error.contains(pattern))
     }
 
     #[tokio::test]
@@ -335,7 +343,7 @@ mod tests {
     async fn test_export_data() {
         let pvs = vec![TEST_PV.to_string()];
         let now = Utc::now().timestamp();
-        
+
         for format in [
             DataFormat::Csv,
             DataFormat::Text,
