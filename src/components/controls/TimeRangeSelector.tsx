@@ -6,6 +6,8 @@ interface TimeRangeSelectorProps {
   currentStartDate?: Date;
   currentEndDate?: Date;
   onChange?: (start: Date, end: Date, timezone: string, mode?: string) => void;
+  isLiveMode?: boolean;
+  liveMode?: 'rolling' | 'append';
 }
 
 const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
@@ -55,6 +57,13 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
   createEffect(() => {
     if (props.initialTimezone && props.initialTimezone !== timezone()) {
       setTimezone(props.initialTimezone);
+    }
+  });
+
+  // Effect to handle live mode changes
+  createEffect(() => {
+    if (props.isLiveMode && props.liveMode === 'append') {
+      setRelativeRange('custom');
     }
   });
 
@@ -116,6 +125,11 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
   };
 
   const handleRelativeRangeChange = (value: string) => {
+    // Don't allow changing from custom range in append mode
+    if (props.isLiveMode && props.liveMode === 'append' && value !== 'custom') {
+      return;
+    }
+
     setRelativeRange(value);
     if (value === 'custom') return;
 
@@ -128,7 +142,7 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
       const date = new Date(value);
       if (isStart) {
         updateTimeRange(date, endDate(), 'custom');
-      } else {
+      } else if (!props.isLiveMode) { // Only allow end date changes when not in live mode
         updateTimeRange(startDate(), date, 'custom');
       }
       setRelativeRange('custom');
@@ -173,7 +187,7 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
           value={relativeRange()}
           onChange={(e) => handleRelativeRangeChange(e.target.value)}
           class="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-          disabled={props.disabled}
+          disabled={props.disabled || (props.isLiveMode && props.liveMode === 'append')}
         >
           <For each={timeRanges}>
             {(range) => <option value={range.value}>{range.label}</option>}
@@ -201,7 +215,7 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
             type="datetime-local"
             value={formatForInput(endDate())}
             onInput={(e) => handleDateInput(false, e.target.value)}
-            disabled={props.disabled}
+            disabled={props.disabled || props.isLiveMode}
             class="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 
                    disabled:opacity-50 disabled:cursor-not-allowed"
           />
@@ -211,7 +225,7 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
       {/* Current Range Display */}
       <div class="text-sm text-gray-600 mt-2">
         <div>Start: {formatForDisplay(startDate())}</div>
-        <div>End: {formatForDisplay(endDate())}</div>
+        <div>End: {props.isLiveMode ? 'Now' : formatForDisplay(endDate())}</div>
         <div>Timezone: {timezone()}</div>
       </div>
     </div>

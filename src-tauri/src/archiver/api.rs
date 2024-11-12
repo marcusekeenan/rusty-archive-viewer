@@ -67,19 +67,24 @@ impl OptimizationLevel {
             OptimizationLevel::Raw => DataOperator::Raw,
             OptimizationLevel::Optimized(points) => DataOperator::Optimized(*points),
             OptimizationLevel::Auto => {
-                let points_per_pixel =
-                    chart_width.map_or(duration as f64 / 1000.0, |w| duration as f64 / w as f64);
+                // Calculate actual data density (points per pixel)
+                let points_per_pixel = match chart_width {
+                    Some(width) if width > 0 => duration as f64 / width as f64,
+                    _ => duration as f64 / 1000.0  // fallback to assuming 1000px width
+                };
 
-                if points_per_pixel <= 1.0 {
+                // For time ranges <= 1 hour or when data would be sparse, use raw data
+                if duration <= 3600 || points_per_pixel <= 1.0 {
                     DataOperator::Raw
-                } else if duration <= 3600 {
-                    DataOperator::Mean(Some(10)) // 10 second bins for <= 1 hour
-                } else if duration <= 86400 {
-                    DataOperator::Mean(Some(60)) // 1 minute bins for <= 1 day
-                } else if duration <= 604800 {
-                    DataOperator::Mean(Some(300)) // 5 minute bins for <= 1 week
                 } else {
-                    DataOperator::Mean(Some(900)) // 15 minute bins for > 1 week
+                    // For longer ranges, use optimized operator with number of points 
+                    // based on chart width or a reasonable default
+                    let target_points = match chart_width {
+                        Some(width) if width > 0 => width * 2, // 2 points per pixel for good resolution
+                        _ => 2000 // reasonable default for unknown width
+                    };
+                    
+                    DataOperator::Optimized(target_points)
                 }
             }
         }
