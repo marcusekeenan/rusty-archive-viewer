@@ -93,17 +93,15 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
   };
 
   const formatForInput = (date: Date): string => {
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZone: timezone()
-    }).replace(/(\d+)\/(\d+)\/(\d+), (\d+):(\d+):(\d+)/, '$3-$1-$2T$4:$5');
-  };
+  try {
+    // Create a date string in the local timezone
+    const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+    return localDate.toISOString().slice(0, 16); // Format: YYYY-MM-DDTHH:mm
+  } catch (error) {
+    console.error('Date formatting error:', error);
+    return '';
+  }
+};
 
   const formatForDisplay = (date: Date): string => {
     try {
@@ -139,11 +137,20 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
 
   const handleDateInput = (isStart: boolean, value: string) => {
     try {
+      // Parse the date in the selected timezone
       const date = new Date(value);
+      if (isNaN(date.getTime())) {
+        throw new Error("Invalid date");
+      }
+  
+      // Adjust for timezone
+      const tzOffset = new Date().getTimezoneOffset() * 60000;
+      const adjustedDate = new Date(date.getTime() + tzOffset);
+  
       if (isStart) {
-        updateTimeRange(date, endDate(), 'custom');
-      } else if (!props.isLiveMode) { // Only allow end date changes when not in live mode
-        updateTimeRange(startDate(), date, 'custom');
+        updateTimeRange(adjustedDate, endDate(), 'custom');
+      } else if (!props.isLiveMode) {
+        updateTimeRange(startDate(), adjustedDate, 'custom');
       }
       setRelativeRange('custom');
     } catch (error) {

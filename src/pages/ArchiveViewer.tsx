@@ -24,6 +24,9 @@ import {
 import type {
   PVWithProperties,
   PenProperties,
+  AxisConfig,
+  PVMetadata,
+  AxisAssignment
 } from "../components/controls/types";
 import { Dynamic } from "solid-js/web";
 
@@ -77,22 +80,94 @@ export default function ArchiveViewer() {
     updateInterval: DEFAULT_UPDATE_INTERVAL
   });
 
+  // Axis Management
+  const [axes, setAxes] = createSignal<Map<string, AxisConfig>>(new Map());
+
   // Computed values
   const chartWidth = createMemo(() => chartContainer?.clientWidth || window.innerWidth);
   
   const visibleData = createMemo(() => {
-    const allData = data();
-    const visibleSet = visiblePVs();
-    return allData.filter((pv) => visibleSet.has(pv.meta.name));
+    // Add debug logging
+    console.log("Calculating visibleData", {
+      allData: data(),
+      visibleSet: Array.from(visiblePVs()),
+    });
+    
+    return data().filter((pv) => {
+      // Explicitly check if the PV name is in the visible set
+      const isVisible = visiblePVs().has(pv.meta.name);
+      console.log(`PV ${pv.meta.name} visibility:`, isVisible);
+      return isVisible;
+    });
   });
+  
 
   const totalPoints = createMemo(() => {
     return visibleData().reduce((sum, pv) => sum + (pv.data?.length || 0), 0);
   });
 
   // Helper Functions
-  const getTimeRangeDuration = (start: Date, end: Date): number => {
-    return end.getTime() - start.getTime();
+  const generateAxisId = (egu: string) => {
+    const base = egu.toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const existing = Array.from(axes().keys()).filter(k => k.startsWith(base));
+    return existing.length ? `${base}_${existing.length + 1}` : base;
+  };
+
+  const updatePVMetadata = (pvName: string, metadata: PVMetadata) => {
+    console.log("Updating metadata for", pvName, metadata);
+    setSelectedPVs(prev => {
+      const pvs = [...prev];
+      const pvIndex = pvs.findIndex(pv => pv.name === pvName);
+      if (pvIndex === -1) return prev;
+
+      const pv = pvs[pvIndex];
+      pv.metadata = metadata;
+
+      // Find or create appropriate axis
+      let axisId = pv.axisId;
+      if (!axisId) {
+        // Look for existing axis with same EGU
+        const existingAxis = Array.from(axes().values())
+          .find(axis => axis.egu.toLowerCase() === metadata.egu.toLowerCase());
+
+        if (existingAxis) {
+          axisId = existingAxis.id;
+        } else {
+          // Create new axis
+          axisId = generateAxisId(metadata.egu);
+          const newAxis: AxisConfig = {
+            id: axisId,
+            egu: metadata.egu,
+            position: axes().size === 0 ? 'left' : 'right',
+            autoRange: true,
+            pvs: new Set([pvName])
+          };
+          
+          setAxes(prev => {
+            const next = new Map(prev);
+            next.set(axisId, newAxis);
+            return next;
+          });
+        }
+      }
+
+      pv.axisId = axisId;
+      
+      // Update axis PV set
+      setAxes(prev => {
+        const next = new Map(prev);
+        const axis = next.get(axisId!);
+        if (axis) {
+          axis.pvs.add(pvName);
+          if (axis.autoRange && metadata.displayLimits) {
+            axis.range = metadata.displayLimits;
+          }
+        }
+        return next;
+      });
+
+      return pvs;
+    });
   };
 
   // Debug Logging
@@ -108,7 +183,7 @@ export default function ArchiveViewer() {
       details: details ? JSON.stringify(details, null, 2) : null,
     };
 
-    setDebugLogs(prev => [...prev.slice(-49), log]); // Keep last 50 logs
+    setDebugLogs(prev => [...prev.slice(-49), log]);
 
     if (type === "error") console.error(message, details);
     if (type === "debug") console.debug(message, details);
@@ -137,6 +212,11 @@ export default function ArchiveViewer() {
         if (!newPoint) {
           console.debug(`No new data for ${pvName}`);
           return pvData;
+        }
+
+        // Update metadata if available
+        if (pvData.meta) {
+          updatePVMetadata(pvName, pvData.meta);
         }
 
         const value = typeof newPoint.val === 'number' 
@@ -186,7 +266,7 @@ export default function ArchiveViewer() {
     // Update time range
     const now = new Date();
     if (config.mode === 'rolling') {
-      const currentDuration = getTimeRangeDuration(currentRange.start, currentRange.end);
+      const currentDuration = currentRange.end.getTime() - currentRange.start.getTime();
       setTimeRange({
         start: new Date(now.getTime() - currentDuration),
         end: now
@@ -225,6 +305,13 @@ export default function ArchiveViewer() {
       );
 
       if (Array.isArray(responseData) && responseData.length > 0) {
+        // Process metadata first
+        responseData.forEach(pvData => {
+          if (pvData.meta) {
+            updatePVMetadata(pvData.meta.name, pvData.meta);
+          }
+        });
+
         const dataWithProps = responseData.map((data, index) => ({
           ...data,
           pen: pvs[index].pen,
@@ -281,7 +368,11 @@ export default function ArchiveViewer() {
   };
 
   const handleAddPV = (pv: string, properties: PenProperties) => {
-    setSelectedPVs((prev) => [...prev, { name: pv, pen: properties }]);
+    setSelectedPVs((prev) => [...prev, { 
+      name: pv, 
+      pen: properties 
+      // axisId will be assigned when metadata arrives
+    }]);
     setVisiblePVs((prev) => {
       const newSet = new Set(prev);
       newSet.add(pv);
@@ -300,18 +391,34 @@ export default function ArchiveViewer() {
   };
 
   const handleRemovePV = (pv: string) => {
-    setSelectedPVs((prev) => prev.filter((p) => p.name !== pv));
+    setSelectedPVs((prev) => {
+      const pvToRemove = prev.find(p => p.name === pv);
+      if (pvToRemove?.axisId) {
+        setAxes(axesPrev => {
+          const next = new Map(axesPrev);
+          const axis = next.get(pvToRemove.axisId!);
+          if (axis) {
+            axis.pvs.delete(pv);
+            if (axis.pvs.size === 0) {
+              next.delete(pvToRemove.axisId!);
+            }
+          }
+          return next;
+        });
+      }
+      return prev.filter((p) => p.name !== pv);
+    });
     setVisiblePVs((prev) => {
       const newSet = new Set(prev);
       newSet.delete(pv);
       return newSet;
     });
-    // Also remove from data array
     setData((prev) => prev.filter((p) => p.meta.name !== pv));
     addDebugLog(`Removed PV: ${pv}`, "info");
   };
 
   const handleVisibilityChange = (pv: string, isVisible: boolean) => {
+    console.log("Visibility change", { pv, isVisible });
     setVisiblePVs((prev) => {
       const newSet = new Set(prev);
       if (isVisible) {
@@ -319,7 +426,49 @@ export default function ArchiveViewer() {
       } else {
         newSet.delete(pv);
       }
-      return newSet;
+      // Force reactivity by creating a new Set
+      return new Set(newSet);
+    });
+  };
+
+  const handleAxisAssignment = (assignment: AxisAssignment) => {
+    setSelectedPVs(prev => {
+      const pvs = [...prev];
+      const pvIndex = pvs.findIndex(pv => pv.name === assignment.pvName);
+      if (pvIndex === -1) return prev;
+
+      const pv = pvs[pvIndex];
+      const oldAxisId = pv.axisId;
+      pv.axisId = assignment.axisId;
+
+      setAxes(axesPrev => {
+        const next = new Map(axesPrev);
+        
+        // Remove from old axis
+        if (oldAxisId) {
+          const oldAxis = next.get(oldAxisId);
+          if (oldAxis) {
+            oldAxis.pvs.delete(assignment.pvName);
+            if (oldAxis.pvs.size === 0) {
+              next.delete(oldAxisId);
+            }
+          }
+        }
+
+        // Add to new axis
+        const newAxis = next.get(assignment.axisId);
+        if (newAxis) {
+          newAxis.pvs.add(assignment.pvName);
+          newAxis.autoRange = assignment.autoRange;
+          if (!assignment.autoRange && assignment.range) {
+            newAxis.range = assignment.range;
+          }
+        }
+
+        return next;
+      });
+
+      return pvs;
     });
   };
 
@@ -332,7 +481,7 @@ export default function ArchiveViewer() {
       const currentRange = timeRange();
       
       if (newConfig.mode === 'rolling') {
-        const duration = getTimeRangeDuration(currentRange.start, currentRange.end);
+        const duration = currentRange.end.getTime() - currentRange.start.getTime();
         setTimeRange({
           start: new Date(now.getTime() - duration),
           end: now
@@ -363,7 +512,7 @@ export default function ArchiveViewer() {
         const now = new Date();
         const currentRange = timeRange();
         const startTime = config.mode === 'rolling' 
-          ? new Date(now.getTime() - getTimeRangeDuration(currentRange.start, currentRange.end))
+          ? new Date(now.getTime() - (currentRange.end.getTime() - currentRange.start.getTime()))
           : currentRange.start;
 
         const initialData = await fetchData(
@@ -377,6 +526,13 @@ export default function ArchiveViewer() {
         if (!initialData?.length) {
           throw new Error("Failed to fetch initial data");
         }
+
+        // Process metadata from initial data
+        initialData.forEach(pvData => {
+          if (pvData.meta) {
+            updatePVMetadata(pvData.meta.name, pvData.meta);
+          }
+        });
 
         setData(initialData.map((pvData, index) => ({
           ...pvData,
@@ -446,66 +602,91 @@ export default function ArchiveViewer() {
         <div class="space-y-4">
           {/* Control Bar */}
           <div class="bg-white rounded-lg shadow-sm p-4">
-            <div class="flex items-center justify-between">
-              {/* Chart Type Selection */}
-              <div class="flex gap-4 items-center">
-                <button
-                  class={`px-3 py-1.5 text-sm font-medium rounded-md ${
-                    selectedChart() === "chartjs"
-                      ? "bg-blue-50 text-blue-700"
-                      : "text-gray-600 hover:bg-gray-50"
-                  }`}
-                  onClick={() => setSelectedChart("chartjs")}
-                >
-                  Chart.js
-                </button>
-                <button
-                  class={`px-3 py-1.5 text-sm font-medium rounded-md ${
-                    selectedChart() === "uplot"
-                      ? "bg-blue-50 text-blue-700"
-                      : "text-gray-600 hover:bg-gray-50"
-                  }`}
-                  onClick={() => setSelectedChart("uplot")}
-                >
-                  µPlot
-                </button>
-              </div>
+          <div class="flex items-center justify-between">
+  {/* Chart Type Selection */}
+  <div class="flex gap-4 items-center">
+    <button
+      class={`px-3 py-1.5 text-sm font-medium rounded-md ${
+        selectedChart() === "chartjs"
+          ? "bg-blue-50 text-blue-700"
+          : "text-gray-600 hover:bg-gray-50"
+      }`}
+      onClick={() => setSelectedChart("chartjs")}
+    >
+      Chart.js
+    </button>
+    <button
+      class={`px-3 py-1.5 text-sm font-medium rounded-md ${
+        selectedChart() === "uplot"
+          ? "bg-blue-50 text-blue-700"
+          : "text-gray-600 hover:bg-gray-50"
+      }`}
+      onClick={() => setSelectedChart("uplot")}
+    >
+      µPlot
+    </button>
+  </div>
 
-              {/* Live Mode Controls */}
-              <div class="flex items-center gap-4">
-                <LiveModeControls
-                  mode={liveModeConfig().mode}
-                  isLive={liveModeConfig().enabled}
-                  onModeChange={(mode) => handleLiveModeConfigChange({ mode })}
-                  onLiveToggle={handleLiveModeToggle}
-                />
-              </div>
+  {/* Live Mode Controls and Action Buttons */}
+  <div class="flex items-center gap-4 ml-auto">
+    {/* Live Mode Options - Show to the left */}
+    <Show when={liveModeConfig().enabled}>
+      <select
+        value={liveModeConfig().mode}
+        onChange={(e) => handleLiveModeConfigChange({ mode: e.target.value as 'rolling' | 'append' })}
+        class="px-3 py-1.5 border rounded text-sm"
+      >
+        <option value="rolling">Rolling Window</option>
+        <option value="append">Append</option>
+      </select>
+    </Show>
 
-              {/* Refresh Button - Only show when not in live mode */}
-              <Show when={!liveModeConfig().enabled}>
-                <button
-                  onClick={handleRefresh}
-                  disabled={loading()}
-                  class="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 
-                         rounded-md text-sm font-medium hover:bg-blue-100 
-                         disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {loading() ? (
-                    <>
-                      <div class="w-4 h-4 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />
-                      <span>Loading...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Refresh</span>
-                      <span class="text-xs bg-blue-100 px-2 py-0.5 rounded-full">
-                        {totalPoints().toLocaleString()}
-                      </span>
-                    </>
-                  )}
-                </button>
-              </Show>
-            </div>
+    {/* Live Toggle and Refresh Buttons - Always in the same place */}
+    <div class="flex items-center gap-2">
+      <button
+        onClick={handleLiveModeToggle}
+        class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium 
+          ${liveModeConfig().enabled
+            ? "bg-red-100 text-red-700 hover:bg-red-200"
+            : "bg-green-100 text-green-700 hover:bg-green-200"
+          } transition-colors`}
+      >
+        {liveModeConfig().enabled ? (
+          <>
+            <div class="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span>Live</span>
+          </>
+        ) : (
+          <span>Go Live</span>
+        )}
+      </button>
+
+      <Show when={!liveModeConfig().enabled}>
+        <button
+          onClick={handleRefresh}
+          disabled={loading()}
+          class="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 
+                 rounded-md text-sm font-medium hover:bg-blue-100 
+                 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {loading() ? (
+            <>
+              <div class="w-4 h-4 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />
+              <span>Loading...</span>
+            </>
+          ) : (
+            <>
+              <span>Refresh</span>
+              <span class="text-xs bg-blue-100 px-2 py-0.5 rounded-full">
+                {totalPoints().toLocaleString()}
+              </span>
+            </>
+          )}
+        </button>
+      </Show>
+    </div>
+  </div>
+</div>
 
             {/* Status Bar */}
             <div class="mt-4 pt-4 border-t flex items-center justify-between text-sm text-gray-500">
@@ -538,6 +719,8 @@ export default function ArchiveViewer() {
                       pvs={selectedPVs().filter(pv => visiblePVs().has(pv.name))}
                       timeRange={timeRange()}
                       timezone={timezone()}
+                      axes={axes()}
+                      onAxisChange={handleAxisAssignment}
                     />
                   }
                 >
@@ -547,6 +730,8 @@ export default function ArchiveViewer() {
                     pvs={selectedPVs().filter(pv => visiblePVs().has(pv.name))}
                     timeRange={timeRange()}
                     timezone={timezone()}
+                    axes={axes()}
+                    onAxisChange={handleAxisAssignment}
                   />
                 </Show>
               ) : (
@@ -574,13 +759,12 @@ export default function ArchiveViewer() {
             initialTimezone={timezone()}
             currentStartDate={timeRange().start}
             currentEndDate={timeRange().end}
-            isLiveMode={liveModeConfig().enabled}
-            liveMode={liveModeConfig().mode}
           />
         </div>
       </div>
-{/* Debug Dialog */}
-<Show when={showDebugData()}>
+
+      {/* Debug Dialog */}
+      <Show when={showDebugData()}>
         <DebugDialog
           isOpen={true}
           onClose={() => setShowDebugData(false)}
@@ -589,4 +773,4 @@ export default function ArchiveViewer() {
       </Show>
     </div>
   );
-}
+}   
