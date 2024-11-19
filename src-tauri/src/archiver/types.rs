@@ -11,22 +11,35 @@ pub struct PVData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Meta {
-    pub name: String,
-    #[serde(alias = "EGU")]
-    pub egu: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(alias = "PREC")]
-    #[serde(deserialize_with = "deserialize_string_or_number")]
-    #[serde(default)]
-    pub precision: Option<i32>,
-    #[serde(default)]
-    pub archive_parameters: Option<ArchiveParameters>,
-    #[serde(default)]
-    pub display_limits: Option<DisplayLimits>,
-    #[serde(default)]
-    pub alarm_limits: Option<AlarmLimits>,
+   pub name: String,
+   #[serde(alias = "EGU", alias = "egu")]
+   pub egu: String,
+   pub description: Option<String>,
+   pub precision: Option<i32>,
+   #[serde(alias = "HOPR", alias = "hopr", deserialize_with = "deserialize_string_or_float")]
+   pub display_high: Option<f64>,
+   #[serde(alias = "LOPR", alias = "lopr", deserialize_with = "deserialize_string_or_float")]
+   pub display_low: Option<f64>,
+   #[serde(alias = "DRVH", alias = "drvh", deserialize_with = "deserialize_string_or_float")]
+   pub drive_high: Option<f64>,
+   #[serde(alias = "DRVL", alias = "drvl", deserialize_with = "deserialize_string_or_float")]
+   pub drive_low: Option<f64>,
+   #[serde(alias = "HIGH", alias = "high", deserialize_with = "deserialize_string_or_float")]
+   pub alarm_high: Option<f64>,
+   #[serde(alias = "LOW", alias = "low", deserialize_with = "deserialize_string_or_float")]
+   pub alarm_low: Option<f64>,
+   #[serde(alias = "HIHI", alias = "hihi", deserialize_with = "deserialize_string_or_float")]
+   pub alarm_hihi: Option<f64>,
+   #[serde(alias = "LOLO", alias = "lolo", deserialize_with = "deserialize_string_or_float")]
+   pub alarm_lolo: Option<f64>,
+   pub archive_parameters: Option<ArchiveParameters>,
+   pub display_limits: Option<DisplayLimits>,
+   pub alarm_limits: Option<AlarmLimits>,
+   pub num_elements: Option<i32>,
+   pub archive_deadband: Option<f64>,
+   pub monitor_deadband: Option<f64>
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisplayLimits {
@@ -36,10 +49,14 @@ pub struct DisplayLimits {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlarmLimits {
-    pub low: f64,
-    pub high: f64,
-    pub lolo: f64,
-    pub hihi: f64,
+    #[serde(alias = "LOW")]
+    pub low: Option<f64>,
+    #[serde(alias = "HIGH")] 
+    pub high: Option<f64>,
+    #[serde(alias = "LOLO")]
+    pub lolo: Option<f64>,
+    #[serde(alias = "HIHI")]
+    pub hihi: Option<f64>,
 }
 
 impl DataFormat {
@@ -56,18 +73,22 @@ impl DataFormat {
 }
 
 // Custom deserializer for string or number precision
-fn deserialize_string_or_number<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+use serde::de::Error;
+
+pub fn deserialize_string_or_int<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    use serde::de::Error;
-
     let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
     match value {
-        serde_json::Value::String(s) => s
-            .parse()
-            .map(Some)
-            .map_err(|_| D::Error::custom("Invalid precision value")),
+        serde_json::Value::String(s) => {
+            // Handle floating point strings by truncating
+            if let Ok(f) = s.parse::<f64>() {
+                Ok(Some(f as i32))
+            } else {
+                s.parse().map(Some).map_err(D::Error::custom)
+            }
+        },
         serde_json::Value::Number(n) => n
             .as_i64()
             .map(|n| Some(n as i32))
@@ -75,6 +96,31 @@ where
         _ => Ok(None),
     }
 }
+
+fn deserialize_string_or_float<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::String(s) => {
+            s.parse::<f64>().map(Some).map_err(D::Error::custom)
+        },
+        serde_json::Value::Number(n) => {
+            n.as_f64().map(Some).ok_or_else(|| D::Error::custom("Invalid number"))
+        },
+        _ => Ok(None),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugEvent {
+    pub timestamp: String,
+    pub level: String,
+    pub message: String,
+    pub details: Option<String>,
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveParameters {
@@ -310,55 +356,55 @@ impl DataOperator {
     pub fn to_string(&self) -> String {
         match self {
             DataOperator::Raw => "raw".to_string(),
-            DataOperator::Optimized(points) => format!("optimized_{}", points),
-            DataOperator::FirstSample(None) => "firstSample".to_string(),
-            DataOperator::FirstSample(Some(bin)) => format!("firstSample_{}", bin),
-            DataOperator::LastSample(None) => "lastSample".to_string(),
-            DataOperator::LastSample(Some(bin)) => format!("lastSample_{}", bin),
-            DataOperator::FirstFill(None) => "firstFill".to_string(),
-            DataOperator::FirstFill(Some(bin)) => format!("firstFill_{}", bin),
-            DataOperator::LastFill(None) => "lastFill".to_string(),
-            DataOperator::LastFill(Some(bin)) => format!("lastFill_{}", bin),
-            DataOperator::Mean(None) => "mean".to_string(),
             DataOperator::Mean(Some(bin)) => format!("mean_{}", bin),
-            DataOperator::Min(None) => "min".to_string(),
-            DataOperator::Min(Some(bin)) => format!("min_{}", bin),
-            DataOperator::Max(None) => "max".to_string(),
-            DataOperator::Max(Some(bin)) => format!("max_{}", bin),
-            DataOperator::Count(None) => "count".to_string(),
-            DataOperator::Count(Some(bin)) => format!("count_{}", bin),
+            DataOperator::Mean(None) => "mean".to_string(),
+            DataOperator::FirstSample(Some(bin)) => format!("firstSample_{}", bin),
+            DataOperator::FirstSample(None) => "firstSample".to_string(),
+            DataOperator::LastSample(Some(bin)) => format!("lastSample_{}", bin),
+            DataOperator::LastSample(None) => "lastSample".to_string(),
             DataOperator::NCount => "ncount".to_string(),
             DataOperator::Nth(n) => format!("nth_{}", n),
-            DataOperator::Median(None) => "median".to_string(),
+            DataOperator::Optimized(points) => format!("mean_{}", points), // Use mean with points for optimization
+            _ => self.default_to_string()  // Handle other cases through helper method
+        }
+    }
+
+    // Helper method for less common operators
+    fn default_to_string(&self) -> String {
+        match self {
+            DataOperator::FirstFill(Some(bin)) => format!("firstFill_{}", bin),
+            DataOperator::FirstFill(None) => "firstFill".to_string(),
+            DataOperator::LastFill(Some(bin)) => format!("lastFill_{}", bin),
+            DataOperator::LastFill(None) => "lastFill".to_string(),
+            DataOperator::Min(Some(bin)) => format!("min_{}", bin),
+            DataOperator::Min(None) => "min".to_string(),
+            DataOperator::Max(Some(bin)) => format!("max_{}", bin),
+            DataOperator::Max(None) => "max".to_string(),
+            DataOperator::Count(Some(bin)) => format!("count_{}", bin),
+            DataOperator::Count(None) => "count".to_string(),
             DataOperator::Median(Some(bin)) => format!("median_{}", bin),
-            DataOperator::Std(None) => "std".to_string(),
+            DataOperator::Median(None) => "median".to_string(),
             DataOperator::Std(Some(bin)) => format!("std_{}", bin),
-            DataOperator::Variance(None) => "variance".to_string(),
+            DataOperator::Std(None) => "std".to_string(),
             DataOperator::Variance(Some(bin)) => format!("variance_{}", bin),
-            DataOperator::PopVariance(None) => "popvariance".to_string(),
+            DataOperator::Variance(None) => "variance".to_string(),
             DataOperator::PopVariance(Some(bin)) => format!("popvariance_{}", bin),
-            DataOperator::Jitter(None) => "jitter".to_string(),
+            DataOperator::PopVariance(None) => "popvariance".to_string(),
             DataOperator::Jitter(Some(bin)) => format!("jitter_{}", bin),
-            DataOperator::Kurtosis(None) => "kurtosis".to_string(),
+            DataOperator::Jitter(None) => "jitter".to_string(),
             DataOperator::Kurtosis(Some(bin)) => format!("kurtosis_{}", bin),
-            DataOperator::Skewness(None) => "skewness".to_string(),
+            DataOperator::Kurtosis(None) => "kurtosis".to_string(),
             DataOperator::Skewness(Some(bin)) => format!("skewness_{}", bin),
-            DataOperator::IgnoreFlyers {
-                bin_size: None,
-                deviations,
-            } => format!("ignoreflyers_{}", deviations),
-            DataOperator::IgnoreFlyers {
-                bin_size: Some(bin),
-                deviations,
-            } => format!("ignoreflyers_{}_{}", bin, deviations),
-            DataOperator::Flyers {
-                bin_size: None,
-                deviations,
-            } => format!("flyers_{}", deviations),
-            DataOperator::Flyers {
-                bin_size: Some(bin),
-                deviations,
-            } => format!("flyers_{}_{}", bin, deviations),
+            DataOperator::Skewness(None) => "skewness".to_string(),
+            DataOperator::IgnoreFlyers { bin_size: Some(bin), deviations } => 
+                format!("ignoreflyers_{}_{}", bin, deviations),
+            DataOperator::IgnoreFlyers { bin_size: None, deviations } => 
+                format!("ignoreflyers_{}", deviations),
+            DataOperator::Flyers { bin_size: Some(bin), deviations } => 
+                format!("flyers_{}_{}", bin, deviations),
+            DataOperator::Flyers { bin_size: None, deviations } => 
+                format!("flyers_{}", deviations),
+            _ => "raw".to_string() // Fallback for any unhandled cases
         }
     }
 
@@ -369,112 +415,80 @@ impl DataOperator {
         )
     }
 
-    // Creates an optimized operator with the specified number of points
     pub fn get_optimized(points: i32) -> Self {
-        DataOperator::Optimized(points)
+        DataOperator::Mean(Some(points))  // Changed to use Mean with binning
     }
 
-    // Checks if this is an optimized operator
     pub fn is_optimized(&self) -> bool {
-        matches!(self, DataOperator::Optimized(_))
+        matches!(self, DataOperator::Optimized(_)) || 
+        matches!(self, DataOperator::Mean(Some(_)))
     }
 
-    // Gets the bin size if the operator supports it
     pub fn get_bin_size(&self) -> Option<i32> {
         match self {
-            DataOperator::FirstSample(bin)
-            | DataOperator::LastSample(bin)
-            | DataOperator::FirstFill(bin)
-            | DataOperator::LastFill(bin)
-            | DataOperator::Mean(bin)
-            | DataOperator::Min(bin)
-            | DataOperator::Max(bin)
-            | DataOperator::Count(bin)
-            | DataOperator::Median(bin)
-            | DataOperator::Std(bin)
-            | DataOperator::Variance(bin)
-            | DataOperator::PopVariance(bin)
-            | DataOperator::Jitter(bin)
-            | DataOperator::Kurtosis(bin)
-            | DataOperator::Skewness(bin) => *bin,
-            DataOperator::IgnoreFlyers { bin_size, .. } | DataOperator::Flyers { bin_size, .. } => {
-                *bin_size
-            }
+            DataOperator::Mean(bin) |
+            DataOperator::FirstSample(bin) |
+            DataOperator::LastSample(bin) |
+            DataOperator::FirstFill(bin) |
+            DataOperator::LastFill(bin) |
+            DataOperator::Min(bin) |
+            DataOperator::Max(bin) |
+            DataOperator::Count(bin) |
+            DataOperator::Median(bin) |
+            DataOperator::Std(bin) |
+            DataOperator::Variance(bin) |
+            DataOperator::PopVariance(bin) |
+            DataOperator::Jitter(bin) |
+            DataOperator::Kurtosis(bin) |
+            DataOperator::Skewness(bin) => *bin,
+            DataOperator::IgnoreFlyers { bin_size, .. } | 
+            DataOperator::Flyers { bin_size, .. } => *bin_size,
+            DataOperator::Optimized(points) => Some(*points),
             _ => None,
         }
     }
 
-    // Gets the appropriate bin size for a duration
     pub fn get_bin_size_for_duration(duration_seconds: i64) -> i32 {
+        let duration_days = duration_seconds / 86400;
         match duration_seconds {
-            d if d <= 3600 => 10,    // <= 1 hour: 10 second bins
-            d if d <= 86400 => 60,   // <= 1 day: 1 minute bins
-            d if d <= 604800 => 300, // <= 1 week: 5 minute bins
-            _ => 900,                // > 1 week: 15 minute bins
+            d if d <= 86400 => 1,      // <= 1 day: raw data
+            d if d <= 604800 => 60,    // <= 7 days: 1-minute bins
+            d if d <= 2592000 => 900,  // <= 30 days: 15-minute bins
+            _ => 3600,                 // > 30 days: 1-hour bins
         }
     }
 
-    // Creates an operator with an appropriate bin size for the duration
     pub fn with_duration(operator_type: &str, duration_seconds: i64) -> Result<Self, String> {
-        let bin_size = Some(Self::get_bin_size_for_duration(duration_seconds));
+        let bin_size = if duration_seconds <= 86400 {
+            None  // Use raw data for <= 1 day
+        } else {
+            Some(Self::get_bin_size_for_duration(duration_seconds))
+        };
+
         match operator_type {
             "mean" => Ok(DataOperator::Mean(bin_size)),
             "firstSample" => Ok(DataOperator::FirstSample(bin_size)),
             "lastSample" => Ok(DataOperator::LastSample(bin_size)),
-            "firstFill" => Ok(DataOperator::FirstFill(bin_size)),
-            "lastFill" => Ok(DataOperator::LastFill(bin_size)),
             "min" => Ok(DataOperator::Min(bin_size)),
             "max" => Ok(DataOperator::Max(bin_size)),
-            "count" => Ok(DataOperator::Count(bin_size)),
-            "median" => Ok(DataOperator::Median(bin_size)),
-            "std" => Ok(DataOperator::Std(bin_size)),
-            _ => Err(format!("Unsupported operator type: {}", operator_type)),
+            "raw" => Ok(DataOperator::Raw),
+            _ => Err(format!("Unsupported operator type: {}", operator_type))
         }
     }
 
-    // Gets the optimal operator for a time range and chart width
     pub fn get_optimal(duration_seconds: i64, chart_width: Option<i32>) -> Self {
-        let points_per_pixel = if let Some(width) = chart_width {
-            duration_seconds as f64 / width as f64
-        } else {
-            duration_seconds as f64 / 1000.0
-        };
-
-        if points_per_pixel <= 1.0 {
-            DataOperator::Raw
-        } else {
-            let target_points = chart_width.unwrap_or(1000);
-            DataOperator::Optimized(target_points)
+        // For durations <= 1 day, always use raw data
+        if duration_seconds <= 86400 {
+            return DataOperator::Raw;
         }
-    }
 
-    // Checks if this operator produces statistical outputs
-    pub fn is_statistical(&self) -> bool {
-        matches!(
-            self,
-            DataOperator::Mean(_)
-                | DataOperator::Median(_)
-                | DataOperator::Std(_)
-                | DataOperator::Variance(_)
-                | DataOperator::PopVariance(_)
-                | DataOperator::Jitter(_)
-                | DataOperator::Kurtosis(_)
-                | DataOperator::Skewness(_)
-        )
-    }
-
-    // Checks if this operator preserves time resolution
-    pub fn preserves_time_resolution(&self) -> bool {
-        matches!(
-            self,
-            DataOperator::Raw
-                | DataOperator::FirstSample(None)
-                | DataOperator::LastSample(None)
-                | DataOperator::NCount
-                | DataOperator::Nth(_)
-        )
+        // For longer durations, use appropriate binning
+        let bin_size = Self::get_bin_size_for_duration(duration_seconds);
+        DataOperator::Mean(Some(bin_size))
     }
 }
+
+
 /// Time range specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeRange {
@@ -506,6 +520,25 @@ impl Point {
             Value::Single(v) => Some(*v),
             Value::Array(arr) if !arr.is_empty() => Some(arr[0]),
             _ => None,
+        }
+    }
+}
+
+impl Meta {
+    pub fn get_display_range(&self) -> Option<(f64, f64)> {
+        match (self.display_low, self.display_high) {
+            (Some(low), Some(high)) if high > low => Some((low, high)),
+            _ => match (self.drive_low, self.drive_high) {
+                (Some(low), Some(high)) if high > low => Some((low, high)),
+                _ => match (self.alarm_lolo, self.alarm_hihi) {
+                    (Some(low), Some(high)) if high > low => Some((low, high)),
+                    _ => if self.egu == "%" { 
+                        Some((0.0, 100.0))
+                    } else {
+                        None
+                    }
+                }
+            }
         }
     }
 }

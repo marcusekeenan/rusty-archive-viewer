@@ -27,11 +27,11 @@ pub use commands::{
 
 // Re-export core functionality from API
 pub use api::{
-    ArchiverClient,    // Main client for interacting with the archiver
-    DataProcessor,     // Data processing implementation
-    DataRequest,       // Request configuration
-    OptimizationLevel, // Data optimization configuration
-    TimeRangeMode,     // Time range specification modes
+    ArchiverClient,
+    DataProcessor,
+    DataRequest,
+    OptimizationLevel,
+    TimeRangeMode,
 };
 
 // Re-export types and constants
