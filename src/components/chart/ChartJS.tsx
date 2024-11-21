@@ -193,7 +193,7 @@ export default function EPICSChart(props: ChartProps) {
                 second: 'HH:mm:ss',
                 minute: 'HH:mm',
                 hour: 'HH:mm',
-                day: 'MM/DD'
+                day: 'MM/dd'
               },
               tooltipFormat: 'yyyy-MM-dd HH:mm:ss.SSS'
             },
