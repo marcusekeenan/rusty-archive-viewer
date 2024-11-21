@@ -55,21 +55,34 @@ pub async fn toggle_debug_window(window: Window) -> Result<(), String> {
     Ok(())
 }
 
-/// Fetches data for multiple PVs with automatic optimization
+
 #[tauri::command]
 pub async fn fetch_data(
     pvs: Vec<String>,
     from: i64,
     to: i64,
-    chart_width: i32,
     timezone: String,
+    mode: String,
+    optimization: Option<String>,
+    target_points: Option<i32>,
 ) -> Result<Vec<NormalizedPVData>, String> {
     let client = ARCHIVER_CLIENT.clone();
     println!("Fetching data with timezone: {}", timezone);
 
-    let mode = TimeRangeMode::Fixed {
-        start: from,
-        end: to,
+    let time_range_mode = match mode.as_str() {
+        "rolling" => TimeRangeMode::Rolling {
+            duration: Duration::from_secs((to - from) as u64),
+            end: Some(to),
+        },
+        "append" => TimeRangeMode::Fixed { start: from, end: to },
+        _ => TimeRangeMode::Fixed { start: from, end: to },
+    };
+
+    let optimization_level = match optimization.as_deref() {
+        Some("raw") => OptimizationLevel::Raw,
+        Some("auto") => OptimizationLevel::Auto,
+        Some("optimized") => OptimizationLevel::Optimized(target_points.unwrap_or(1000)),
+        _ => OptimizationLevel::Optimized(target_points.unwrap_or(1000)),
     };
 
     let mut results = Vec::new();
@@ -77,9 +90,9 @@ pub async fn fetch_data(
         match client
             .fetch_historical_data(
                 &pv,
-                &mode,
-                OptimizationLevel::Auto,
-                Some(chart_width),
+                &time_range_mode,
+                optimization_level,
+                target_points,
                 Some(&timezone),
             )
             .await
@@ -278,7 +291,15 @@ mod tests {
     async fn test_fetch_data() {
         let pvs = vec![TEST_PV.to_string()];
         let now = Utc::now().timestamp();
-        let result = fetch_data(pvs, now - 3600, now, 1000, "UTC".to_string()).await;
+        let result = fetch_data(
+            pvs,
+            now - 3600,
+            now,
+            "UTC".to_string(),
+            "fixed".to_string(),
+            Some("optimized".to_string()),
+            Some(1000)
+        ).await;
 
         assert!(result.is_ok(), "Failed to fetch data: {:?}", result.err());
 

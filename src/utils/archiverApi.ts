@@ -1,99 +1,17 @@
+// archiverApi.ts
+
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import {
+    Meta,
+    NormalizedPVData,
+    PointValue,
+    ExtendedFetchOptions,
+    DataFormat,
+    DetailedPVStatus,
+    LiveUpdateConfig
+} from './types';
 
-// Type definitions
-export interface Meta {
-    name: string;
-    egu: string;
-    description?: string;
-    precision?: number;
-    archive_parameters?: {
-        sampling_period: number;
-        sampling_method: string;
-        last_modified: string;
-    };
-    display_limits?: {
-        low: number;
-        high: number;
-    };
-    alarm_limits?: {
-        low: number;
-        high: number;
-        lolo: number;
-        hihi: number;
-    };
-}
-
-export interface ProcessedPoint {
-    timestamp: number;
-    severity: number;
-    status: number;
-    value: number;
-    min: number;
-    max: number;
-    stddev: number;
-    count: number;
-}
-
-export interface Statistics {
-    mean: number;
-    std_dev: number;
-    min: number;
-    max: number;
-    count: number;
-    first_timestamp: number;
-    last_timestamp: number;
-}
-
-export interface NormalizedPVData {
-    meta: Meta;
-    data: ProcessedPoint[];
-    statistics?: Statistics;
-}
-
-export interface FetchOptions {
-    timezone?: string;
-    chartWidth?: number;
-}
-
-export enum DataFormat {
-    Json = "json",
-    Csv = "csv",
-    Raw = "raw",
-    Matlab = "mat",
-    Text = "txt",
-    Svg = "svg"
-}
-
-export interface PointValue {
-    secs: number;
-    nanos?: number;
-    val: number | number[] | string | Uint8Array;
-    severity?: number;
-    status?: number;
-}
-
-export interface PVStatus {
-    name: string;
-    connected: boolean;
-    last_event_time?: number;
-    last_status?: string;
-    archived: boolean;
-    error_count: number;
-    last_error?: string;
-}
-
-export interface LiveUpdateConfig {
-    pvs: string[];
-    updateIntervalMs: number;
-    timezone?: string;
-    onData: (data: Record<string, PointValue>) => void;
-    onError?: (error: string) => void;
-}
-
-/**
- * Manages real-time data updates for a window
- */
 export class LiveUpdateManager {
     private unlistenFn?: UnlistenFn;
     private isActive = false;
@@ -108,14 +26,12 @@ export class LiveUpdateManager {
         try {
             console.log("Starting live updates for PVs:", config.pvs);
             
-            // Start the backend polling
             await invoke("start_live_updates", {
                 pvs: config.pvs,
                 updateIntervalMs: config.updateIntervalMs,
                 timezone: config.timezone
             });
             
-            // Listen for updates
             this.unlistenFn = await listen<Record<string, PointValue>>(
                 "live-update",
                 (event) => {
@@ -136,14 +52,8 @@ export class LiveUpdateManager {
         this.isActive = false;
         
         try {
-            // Stop backend first
-            try {
-                await invoke("stop_live_updates");
-            } catch (error) {
-                console.error("Error stopping backend updates:", error);
-            }
+            await invoke("stop_live_updates");
             
-            // Always clean up listener
             if (this.unlistenFn) {
                 await this.unlistenFn();
                 this.unlistenFn = undefined;
@@ -152,7 +62,6 @@ export class LiveUpdateManager {
             console.log("LiveUpdateManager stopped successfully");
         } catch (error) {
             console.error("Error in LiveUpdateManager stop:", error);
-            // Still try to clean up listener on error
             if (this.unlistenFn) {
                 try {
                     await this.unlistenFn();
@@ -169,22 +78,21 @@ export class LiveUpdateManager {
         return this.isActive;
     }
 }
-/**
- * Fetches historical data with automatic optimization
- */
+
 export async function fetchData(
     pvs: string[],
     start: Date,
     end: Date,
-    chartWidth: number,
-    timezone: string,
+    options: ExtendedFetchOptions = {}
 ): Promise<NormalizedPVData[]> {
     const params = {
         pvs,
         from: Math.floor(start.getTime() / 1000),
         to: Math.floor(end.getTime() / 1000),
-        chartWidth, // Use camelCase for Tauri
-        timezone
+        timezone: options.timezone || 'UTC',
+        mode: options.mode || 'fixed',
+        optimization: options.optimization || 'optimized',
+        target_points: options.targetPoints || 1000,
     };
     
     try {
@@ -195,9 +103,6 @@ export async function fetchData(
     }
 }
 
-/**
- * Fetches data at a specific timestamp
- */
 export async function fetchDataAtTime(
     pvs: string[],
     timestamp?: Date,
@@ -217,9 +122,6 @@ export async function fetchDataAtTime(
     }
 }
 
-/**
- * Fetches metadata for a PV
- */
 export async function getPVMetadata(pv: string): Promise<Meta> {
     try {
         return await invoke<Meta>("get_pv_metadata", { pv });
@@ -229,20 +131,19 @@ export async function getPVMetadata(pv: string): Promise<Meta> {
     }
 }
 
-/**
- * Exports data in various formats
- */
 export async function exportData(
     pvs: string[],
     from: Date,
     to: Date,
-    format: DataFormat
+    format: DataFormat,
+    options: ExtendedFetchOptions = {}
 ): Promise<string> {
     const params = {
         pvs,
         from: Math.floor(from.getTime() / 1000),
         to: Math.floor(to.getTime() / 1000),
-        format
+        format,
+        ...options
     };
 
     try {
@@ -253,9 +154,6 @@ export async function exportData(
     }
 }
 
-/**
- * Validates PV names
- */
 export async function validatePVs(pvs: string[]): Promise<boolean[]> {
     try {
         return await invoke<boolean[]>("validate_pvs", { pvs });
@@ -265,21 +163,15 @@ export async function validatePVs(pvs: string[]): Promise<boolean[]> {
     }
 }
 
-/**
- * Gets status information for PVs
- */
-export async function getPVStatus(pvs: string[]): Promise<PVStatus[]> {
+export async function getPVStatus(pvs: string[]): Promise<DetailedPVStatus[]> {
     try {
-        return await invoke<PVStatus[]>("get_pv_status", { pvs });
+        return await invoke<DetailedPVStatus[]>("get_pv_status", { pvs });
     } catch (error) {
         console.error("Error getting PV status:", error);
         throw error;
     }
 }
 
-/**
- * Tests connection to the archiver
- */
 export async function testConnection(): Promise<boolean> {
     try {
         return await invoke<boolean>("test_connection");
@@ -289,7 +181,6 @@ export async function testConnection(): Promise<boolean> {
     }
 }
 
-// Helper functions
 export function formatTimestamp(timestamp: number): string {
     return new Date(timestamp * 1000).toISOString();
 }

@@ -9,7 +9,6 @@ use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, SystemTime};
@@ -73,22 +72,25 @@ impl TimeRangeMode {
 
 #[derive(Debug, Clone, Copy)]
 pub enum OptimizationLevel {
-    Raw,
-    Optimized(i32),
-    Auto,
-    Mean(i32),
-    FirstSample(i32),
-    LastSample(i32),
-    Min(i32),
-    Max(i32),
+    Raw,                    // Raw data, no processing
+    Optimized(i32),        // Default optimized mode with point count
+    Auto,                  // Automatic optimization with default points
+    Mean(i32),            // Mean with bin size
+    FirstSample(i32),     // First sample in bin
+    LastSample(i32),      // Last sample in bin
+    Min(i32),             // Minimum value in bin
+    Max(i32),             // Maximum value in bin
 }
 
 impl OptimizationLevel {
-    pub fn get_operator(&self, duration: i64, chart_width: Option<i32>) -> DataOperator {
+    pub fn get_operator(&self, _duration: i64, target_points: Option<i32>) -> DataOperator {
         match self {
             OptimizationLevel::Raw => DataOperator::Raw,
+            // Optimized mode handles both raw and binned data automatically
             OptimizationLevel::Optimized(points) => DataOperator::Optimized(*points),
-            OptimizationLevel::Auto => DataOperator::get_optimal(duration, chart_width),
+            // Auto mode uses optimized with default or specified points
+            OptimizationLevel::Auto => DataOperator::Optimized(target_points.unwrap_or(1000)),
+            // Direct operator mappings for specific processing needs
             OptimizationLevel::Mean(interval) => DataOperator::Mean(Some(*interval)),
             OptimizationLevel::FirstSample(interval) => DataOperator::FirstSample(Some(*interval)),
             OptimizationLevel::LastSample(interval) => DataOperator::LastSample(Some(*interval)),
@@ -97,6 +99,7 @@ impl OptimizationLevel {
         }
     }
 }
+
 
 // Helper trait for value extraction
 trait ValueExt {
@@ -344,20 +347,20 @@ impl ArchiverClient {
         pv: &str,
         mode: &TimeRangeMode,
         optimization: OptimizationLevel,
-        chart_width: Option<i32>,
+        target_points: Option<i32>,
         timezone: Option<&str>,
     ) -> Result<NormalizedPVData, String> {
         let (start, end) = mode.get_range();
         let cache_key = format!("{}:{}:{}:{:?}", pv, start, end, optimization);
-
+    
         self.get_cached_or_fetch(&cache_key, async {
             let duration = end - start;
-            let operator = optimization.get_operator(duration, chart_width);
-
+            let operator = optimization.get_operator(duration, target_points);
+    
             let data = self
                 .fetch_data_with_operator(pv, start, end, &operator, timezone)
                 .await?;
-
+    
             self.processor.process_data(data)
         })
         .await
@@ -468,19 +471,19 @@ impl ArchiverClient {
         pvs: &[String],
         mode: &TimeRangeMode,
         optimization: Option<OptimizationLevel>,
-        chart_width: Option<i32>,
+        target_points: Option<i32>,
         timezone: Option<&str>,
     ) -> Result<Vec<NormalizedPVData>, String> {
         if pvs.is_empty() {
             return Ok(Vec::new());
         }
-
+    
         let (start, end) = mode.get_range();
         let duration = end - start;
         let optimization = optimization.unwrap_or(OptimizationLevel::Auto);
-        let operator = optimization.get_operator(duration, chart_width);
+        let operator = optimization.get_operator(duration, target_points);
         let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS));
-
+    
         let results = stream::iter(pvs.chunks(MAX_PVS_PER_REQUEST))
             .map(|chunk| {
                 let chunk = chunk.to_vec();
@@ -580,40 +583,6 @@ impl ArchiverClient {
             Ok(successes.into_iter().map(Result::unwrap).collect())
         }
     }
-    // async fn fetch_chunk_data(
-    //     &self,
-    //     pvs: &[String],
-    //     start: i64,
-    //     end: i64,
-    //     operator: &DataOperator,
-    //     timezone: Option<&str>,
-    // ) -> Result<Vec<NormalizedPVData>, String> {
-    //     let cache_key = format!("{}:{}:{}:{:?}", pvs.join(","), start, end, operator);
-
-    //     self.get_cached_or_fetch(&cache_key, async move {
-    //         let url = self.build_url("data/getData.json", &[
-    //             ("pv", &pvs.join(",")),
-    //             ("from", &self.format_date(start * 1000, timezone).unwrap()),
-    //             ("to", &self.format_date(end * 1000, timezone).unwrap()),
-    //             ("fetchLatestMetadata", "true"),
-    //         ])?;
-
-    //         if let Some(op_str) = operator.to_string() {
-    //             url.query_pairs_mut().append_pair("donotchunk", "true");
-    //             url.query_pairs_mut().append_pair("op", &op_str);
-    //         }
-
-    //         let data: Vec<PVData> = self.get(url).await?;
-
-    //         let processed_data = stream::iter(data)
-    //             .map(|pv_data| self.processor.process_data(pv_data))
-    //             .buffer_unordered(num_cpus::get())
-    //             .collect::<Vec<_>>()
-    //             .await;
-
-    //         processed_data.into_iter().collect::<Result<Vec<_>, _>>()
-    //     }).await
-    // }
 
     async fn fetch_live_data(
         &self,
@@ -820,64 +789,6 @@ impl ArchiverClient {
         Ok(())
     }
 
-    // async fn fetch_live_data(
-    //     &self,
-    //     pvs: &[String],
-    //     timezone: Option<&str>,
-    // ) -> Result<HashMap<String, PointValue>, String> {
-    //     if pvs.is_empty() {
-    //         return Ok(HashMap::new());
-    //     }
-
-    //     let now = Utc::now().timestamp();
-    //     let five_seconds_ago = now - 5;
-
-    //     let from_formatted = self.format_date(five_seconds_ago * 1000, timezone)
-    //         .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
-    //     let to_formatted = self.format_date(now * 1000, timezone)
-    //         .ok_or_else(|| ERRORS.invalid_timerange.to_string())?;
-
-    //     let base_params = [
-    //         ("from", from_formatted.as_str()),
-    //         ("to", to_formatted.as_str()),
-    //         ("fetchLatestMetadata", "true"),
-    //     ];
-
-    //     let futures: Vec<_> = pvs.chunks(MAX_CONCURRENT_REQUESTS).map(|chunk| {
-    //         let requests = chunk.iter().map(|pv| {
-    //             let url = self.build_url("getData.json", &base_params)
-    //                 .map(|mut u| {
-    //                     u.query_pairs_mut().append_pair("pv", pv);
-    //                     u
-    //                 });
-    //             let pv = pv.clone();
-
-    //             async move {
-    //                 match url {
-    //                     Ok(u) => match self.get::<Vec<PVData>>(u).await {
-    //                         Ok(mut data) => data.pop()
-    //                             .and_then(|pv_data| pv_data.data.last().map(|point| {
-    //                                 (pv, PointValue {
-    //                                     secs: point.secs,
-    //                                     nanos: point.nanos,
-    //                                     val: point.val.clone(),
-    //                                     severity: point.severity,
-    //                                     status: point.status,
-    //                                 })
-    //                             })),
-    //                         Err(_) => None,
-    //                     },
-    //                     Err(_) => None,
-    //                 }
-    //             }
-    //         });
-    //         join_all(requests)
-    //     }).collect();
-
-    //     let all_results = join_all(futures).await;
-    //     Ok(all_results.into_iter().flatten().flatten().collect())
-    // }
-
     pub async fn fetch_metadata(&self, pv: &str) -> Result<Meta, String> {
         let url = self.build_url("bpl/getMetadata", &[("pv", pv)])?;
         self.get(url).await
@@ -968,7 +879,7 @@ mod tests {
 
         let mode = TimeRangeMode::Fixed { start, end };
         let result = client
-            .fetch_historical_data(pv, &mode, OptimizationLevel::Raw, None, None)
+            .fetch_historical_data(pv, &mode, OptimizationLevel::Raw, Some(1000), None)
             .await;
 
         assert!(result.is_ok(), "Failed to fetch data");

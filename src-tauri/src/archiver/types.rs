@@ -385,22 +385,15 @@ impl DataOperator {
     pub fn to_string(&self) -> String {
         match self {
             DataOperator::Raw => "raw".to_string(),
+            // Optimized is the main automatic mode
+            DataOperator::Optimized(points) => format!("optimized_{}", points),
+            // Statistical operators with optional bin sizes
             DataOperator::Mean(Some(bin)) => format!("mean_{}", bin),
             DataOperator::Mean(None) => "mean".to_string(),
             DataOperator::FirstSample(Some(bin)) => format!("firstSample_{}", bin),
             DataOperator::FirstSample(None) => "firstSample".to_string(),
             DataOperator::LastSample(Some(bin)) => format!("lastSample_{}", bin),
             DataOperator::LastSample(None) => "lastSample".to_string(),
-            DataOperator::NCount => "ncount".to_string(),
-            DataOperator::Nth(n) => format!("nth_{}", n),
-            DataOperator::Optimized(points) => format!("mean_{}", points), // Use mean with points for optimization
-            _ => self.default_to_string(), // Handle other cases through helper method
-        }
-    }
-
-    // Helper method for less common operators
-    fn default_to_string(&self) -> String {
-        match self {
             DataOperator::FirstFill(Some(bin)) => format!("firstFill_{}", bin),
             DataOperator::FirstFill(None) => "firstFill".to_string(),
             DataOperator::LastFill(Some(bin)) => format!("lastFill_{}", bin),
@@ -411,6 +404,8 @@ impl DataOperator {
             DataOperator::Max(None) => "max".to_string(),
             DataOperator::Count(Some(bin)) => format!("count_{}", bin),
             DataOperator::Count(None) => "count".to_string(),
+            DataOperator::NCount => "ncount".to_string(),
+            DataOperator::Nth(n) => format!("nth_{}", n),
             DataOperator::Median(Some(bin)) => format!("median_{}", bin),
             DataOperator::Median(None) => "median".to_string(),
             DataOperator::Std(Some(bin)) => format!("std_{}", bin),
@@ -425,106 +420,31 @@ impl DataOperator {
             DataOperator::Kurtosis(None) => "kurtosis".to_string(),
             DataOperator::Skewness(Some(bin)) => format!("skewness_{}", bin),
             DataOperator::Skewness(None) => "skewness".to_string(),
-            DataOperator::IgnoreFlyers {
-                bin_size: Some(bin),
-                deviations,
-            } => format!("ignoreflyers_{}_{}", bin, deviations),
-            DataOperator::IgnoreFlyers {
-                bin_size: None,
-                deviations,
-            } => format!("ignoreflyers_{}", deviations),
-            DataOperator::Flyers {
-                bin_size: Some(bin),
-                deviations,
-            } => format!("flyers_{}_{}", bin, deviations),
-            DataOperator::Flyers {
-                bin_size: None,
-                deviations,
-            } => format!("flyers_{}", deviations),
-            _ => "raw".to_string(), // Fallback for any unhandled cases
+            DataOperator::IgnoreFlyers { bin_size, deviations } => match bin_size {
+                Some(bin) => format!("ignoreflyers_{}_{}", bin, deviations),
+                None => format!("ignoreflyers_{}", deviations),
+            },
+            DataOperator::Flyers { bin_size, deviations } => match bin_size {
+                Some(bin) => format!("flyers_{}_{}", bin, deviations),
+                None => format!("flyers_{}", deviations),
+            },
         }
+    }
+
+    pub fn get_optimal(_duration_seconds: i64) -> Self {
+        // Always use optimized with default points, letting the archiver
+        // determine whether to return raw or binned data
+        DataOperator::Optimized(1000)
     }
 
     pub fn supports_binning(&self) -> bool {
-        !matches!(
-            self,
-            DataOperator::Raw | DataOperator::NCount | DataOperator::Nth(_)
-        )
-    }
-
-    pub fn get_optimized(points: i32) -> Self {
-        DataOperator::Mean(Some(points)) // Changed to use Mean with binning
+        !matches!(self, DataOperator::Raw | DataOperator::NCount | DataOperator::Nth(_))
     }
 
     pub fn is_optimized(&self) -> bool {
-        matches!(self, DataOperator::Optimized(_)) || matches!(self, DataOperator::Mean(Some(_)))
-    }
-
-    pub fn get_bin_size(&self) -> Option<i32> {
-        match self {
-            DataOperator::Mean(bin)
-            | DataOperator::FirstSample(bin)
-            | DataOperator::LastSample(bin)
-            | DataOperator::FirstFill(bin)
-            | DataOperator::LastFill(bin)
-            | DataOperator::Min(bin)
-            | DataOperator::Max(bin)
-            | DataOperator::Count(bin)
-            | DataOperator::Median(bin)
-            | DataOperator::Std(bin)
-            | DataOperator::Variance(bin)
-            | DataOperator::PopVariance(bin)
-            | DataOperator::Jitter(bin)
-            | DataOperator::Kurtosis(bin)
-            | DataOperator::Skewness(bin) => *bin,
-            DataOperator::IgnoreFlyers { bin_size, .. } | DataOperator::Flyers { bin_size, .. } => {
-                *bin_size
-            }
-            DataOperator::Optimized(points) => Some(*points),
-            _ => None,
-        }
-    }
-
-    pub fn get_bin_size_for_duration(duration_seconds: i64) -> i32 {
-        let duration_days = duration_seconds / 86400;
-        match duration_seconds {
-            d if d <= 86400 => 1,     // <= 1 day: raw data
-            d if d <= 604800 => 60,   // <= 7 days: 1-minute bins
-            d if d <= 2592000 => 900, // <= 30 days: 15-minute bins
-            _ => 3600,                // > 30 days: 1-hour bins
-        }
-    }
-
-    pub fn with_duration(operator_type: &str, duration_seconds: i64) -> Result<Self, String> {
-        let bin_size = if duration_seconds <= 86400 {
-            None // Use raw data for <= 1 day
-        } else {
-            Some(Self::get_bin_size_for_duration(duration_seconds))
-        };
-
-        match operator_type {
-            "mean" => Ok(DataOperator::Mean(bin_size)),
-            "firstSample" => Ok(DataOperator::FirstSample(bin_size)),
-            "lastSample" => Ok(DataOperator::LastSample(bin_size)),
-            "min" => Ok(DataOperator::Min(bin_size)),
-            "max" => Ok(DataOperator::Max(bin_size)),
-            "raw" => Ok(DataOperator::Raw),
-            _ => Err(format!("Unsupported operator type: {}", operator_type)),
-        }
-    }
-
-    pub fn get_optimal(duration_seconds: i64, chart_width: Option<i32>) -> Self {
-        // For durations <= 1 day, always use raw data
-        if duration_seconds <= 86400 {
-            return DataOperator::Raw;
-        }
-
-        // For longer durations, use appropriate binning
-        let bin_size = Self::get_bin_size_for_duration(duration_seconds);
-        DataOperator::Mean(Some(bin_size))
+        matches!(self, DataOperator::Optimized(_))
     }
 }
-
 /// Time range specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeRange {

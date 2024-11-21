@@ -159,7 +159,7 @@ export default function PVSelector(props: PVSelectorProps) {
           }
           onSave={(properties) => {
             props.onUpdatePV(editingPV()!, properties);
-            setEditingPV(null);
+            // Don't close the dialog on save since it's live updating
           }}
         />
       )}
