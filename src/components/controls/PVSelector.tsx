@@ -1,19 +1,20 @@
-// PVSelector.tsx
 import { createSignal, For } from "solid-js";
 import type { PVWithProperties, PenProperties } from "./types";
+import type { AxisConfig } from "../chart/types";
 import { DEFAULT_PEN_PROPERTIES } from "./types";
 import { getNextColor } from "./colors";
 import PenPropertiesDialog from "./PenPropertiesDialog";
 import PVListItem from "./PVListItem";
 
-type PVSelectorProps = {
+interface PVSelectorProps {
   selectedPVs: () => PVWithProperties[];
   visiblePVs: () => Set<string>;
-  onAddPV: (pv: string, properties: PenProperties) => void;
-  onUpdatePV: (pv: string, properties: PenProperties) => void;
+  availableAxes: Map<string, AxisConfig>;
+  onAddPV: (pv: string, properties: PenProperties) => void | Promise<void>;
+  onUpdatePV: (pv: string, properties: PenProperties, axisId: string) => void;
   onRemovePV: (pv: string) => void;
   onVisibilityChange: (pvName: string, isVisible: boolean) => void;
-};
+}
 
 export default function PVSelector(props: PVSelectorProps) {
   const defaultPV = "ROOM:LI30:1:OUTSIDE_TEMP";
@@ -27,7 +28,6 @@ export default function PVSelector(props: PVSelectorProps) {
   }
 
   const parsePVs = (input: string): string[] => {
-    // Split by commas or newlines and clean up each entry
     return input
       .split(/[,\n]/)
       .map(pv => pv.trim())
@@ -56,9 +56,20 @@ export default function PVSelector(props: PVSelectorProps) {
     setSearchText("");
   };
 
-  const toggleInputMode = () => {
-    setInputMode(prev => prev === 'single' ? 'multi' : 'single');
-    setSearchText("");
+  const getSelectedPVInfo = (pvName: string) => {
+    const pv = props.selectedPVs().find(p => p.name === pvName);
+    return {
+      pen: pv?.pen || DEFAULT_PEN_PROPERTIES,
+      axisId: pv?.axisId
+    };
+  };
+
+  const handlePVEdit = (pv: PVWithProperties) => {
+    setEditingPV(pv.name);
+  };
+
+  const handlePVSave = (pvName: string, properties: PenProperties, axisId: string) => {
+    props.onUpdatePV(pvName, properties, axisId);
   };
 
   return (
@@ -71,7 +82,7 @@ export default function PVSelector(props: PVSelectorProps) {
           </label>
           <button
             type="button"
-            onClick={toggleInputMode}
+            onClick={() => setInputMode(prev => prev === 'single' ? 'multi' : 'single')}
             class="text-xs text-blue-500 hover:text-blue-600"
           >
             {inputMode() === 'single' ? 'Switch to Multi-line' : 'Switch to Single-line'}
@@ -83,7 +94,7 @@ export default function PVSelector(props: PVSelectorProps) {
             <input
               type="text"
               value={searchText()}
-              onInput={(e) => setSearchText((e.target as HTMLInputElement).value)}
+              onInput={(e) => setSearchText(e.currentTarget.value)}
               placeholder="Enter PV names (comma-separated)"
               class="flex-1 px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
@@ -98,7 +109,7 @@ export default function PVSelector(props: PVSelectorProps) {
           <div class="flex flex-col gap-2">
             <textarea
               value={searchText()}
-              onInput={(e) => setSearchText((e.target as HTMLTextAreaElement).value)}
+              onInput={(e) => setSearchText(e.currentTarget.value)}
               placeholder="Enter PV names (one per line)"
               rows={5}
               class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
@@ -119,7 +130,7 @@ export default function PVSelector(props: PVSelectorProps) {
         </div>
       </form>
 
-      {/* PV List Section */}
+      {/* PV List */}
       <div class="flex flex-col gap-2">
         <div class="flex justify-between items-center">
           <h3 class="font-medium">Selected PVs:</h3>
@@ -137,7 +148,7 @@ export default function PVSelector(props: PVSelectorProps) {
                 <PVListItem
                   pv={pv}
                   isVisible={props.visiblePVs().has(pv.name)}
-                  onEdit={() => setEditingPV(pv.name)}
+                  onEdit={() => handlePVEdit(pv)}
                   onRemove={() => props.onRemovePV(pv.name)}
                   onToggleVisibility={(isVisible) => props.onVisibilityChange(pv.name, isVisible)}
                 />
@@ -147,19 +158,17 @@ export default function PVSelector(props: PVSelectorProps) {
         )}
       </div>
 
-      {/* Edit Dialog */}
+      {/* Properties Dialog */}
       {editingPV() && (
         <PenPropertiesDialog
           isOpen={true}
           onClose={() => setEditingPV(null)}
           pv={editingPV()!}
-          properties={
-            props.selectedPVs().find((pv) => pv.name === editingPV())?.pen ||
-            DEFAULT_PEN_PROPERTIES
-          }
-          onSave={(properties) => {
-            props.onUpdatePV(editingPV()!, properties);
-            // Don't close the dialog on save since it's live updating
+          properties={getSelectedPVInfo(editingPV()!).pen}
+          availableAxes={props.availableAxes}
+          selectedAxisId={getSelectedPVInfo(editingPV()!).axisId}
+          onSave={(properties, axisId) => {
+            handlePVSave(editingPV()!, properties, axisId);
           }}
         />
       )}

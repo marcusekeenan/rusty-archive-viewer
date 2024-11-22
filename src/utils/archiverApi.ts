@@ -124,10 +124,35 @@ export async function fetchDataAtTime(
 
 export async function getPVMetadata(pv: string): Promise<Meta> {
     try {
-        return await invoke<Meta>("get_pv_metadata", { pv });
+        const now = Math.floor(Date.now() / 1000);
+        const data = await invoke<NormalizedPVData[]>("fetch_data", {
+            pvs: [pv],
+            from: now - 60,
+            to: now,
+            timezone: 'UTC',
+            mode: 'fixed',
+            optimization: 'raw',
+            target_points: 1
+        });
+
+        if (!data?.[0]?.meta) {
+            return {
+                name: pv,
+                egu: 'Value',
+                description: 'No metadata available',
+                display_limits: { low: -100, high: 100 }
+            };
+        }
+
+        return data[0].meta;
     } catch (error) {
         console.error("Error fetching PV metadata:", error);
-        throw error;
+        return {
+            name: pv,
+            egu: 'Value',
+            description: 'Error fetching metadata',
+            display_limits: { low: -100, high: 100 }
+        };
     }
 }
 
