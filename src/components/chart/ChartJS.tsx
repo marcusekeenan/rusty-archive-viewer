@@ -138,9 +138,11 @@ export default function EPICSChart(props: ChartProps) {
           const pvInfo = props.pvs.find(pv => pv.name === d.meta.name);
           return pvInfo?.axisId === id;
         });
-
-        const limits = pvData ? getAxisLimits(pvData.meta) : { min: undefined, max: undefined };
-
+  
+        // Use axis range if set and not auto, otherwise fall back to PV limits
+        const range = !axis.autoRange && axis.range ? axis.range : 
+                     (pvData ? getAxisLimits(pvData.meta) : { low: undefined, high: undefined });
+  
         return [
           id,
           {
@@ -160,13 +162,12 @@ export default function EPICSChart(props: ChartProps) {
               color: '#666',
               font: { size: 11 }
             },
-            min: limits.min,
-            max: limits.max
+            min: range.low,
+            max: range.high
           }
         ];
       })
     );
-
     return {
       type: 'line' as const,
       data: { datasets },

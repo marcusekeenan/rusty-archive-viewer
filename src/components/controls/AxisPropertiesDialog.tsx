@@ -1,5 +1,6 @@
-import { createSignal, createEffect } from 'solid-js';
-import type { AxisConfig } from '../components/chart/types';
+// AxisPropertiesDialog.tsx
+import { createSignal, createEffect, Show } from 'solid-js';
+import type { AxisConfig } from '../chart/types';
 
 interface AxisPropertiesDialogProps {
   isOpen: boolean;
@@ -15,15 +16,34 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
       id: `axis_${Date.now()}`,
       egu: '',
       position: 'left',
-      autoRange: true,
-      range: { low: 0, high: 100 }, // Default range
+      autoRange: true, // Default to true
+      range: { low: 0, high: 100 },
       pvs: new Set(),
     }
   );
 
+  const debounce = <T extends (...args: any[]) => any>(
+    fn: T,
+    delay: number
+  ) => {
+    let timeoutId: number;
+    return (...args: Parameters<T>) => {
+      clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => fn(...args), delay);
+    };
+  };
+
+  const debouncedSave = debounce((newProps: AxisConfig) => {
+    props.onSave(newProps);
+  }, 150);
+
   createEffect(() => {
     if (props.isOpen && props.axis) {
-      setProperties(props.axis);
+      // When receiving an existing axis, default to true if autoRange is not set
+      setProperties({
+        ...props.axis,
+        autoRange: props.axis.autoRange ?? true
+      });
     }
   });
 
@@ -31,50 +51,59 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
     key: K,
     value: AxisConfig[K]
   ) => {
-    setProperties(prev => ({
-      ...prev,
-      [key]: value
-    }));
+    const newProps = { ...properties(), [key]: value };
+    setProperties(newProps);
+    debouncedSave(newProps);
   };
 
   const handleRangeChange = (key: 'low' | 'high', value: string) => {
     const numValue = parseFloat(value);
     if (!isNaN(numValue)) {
-      setProperties(prev => ({
-        ...prev,
+      const newProps = {
+        ...properties(),
         range: {
-          low: key === 'low' ? numValue : prev.range?.low ?? 0,
-          high: key === 'high' ? numValue : prev.range?.high ?? 100
+          ...properties().range!,
+          [key]: numValue
         }
-      }));
+      };
+      setProperties(newProps);
+      debouncedSave(newProps);
     }
-  };
-
-  const handleSubmit = (e: Event) => {
-    e.preventDefault();
-    props.onSave(properties());
-    props.onClose();
   };
 
   if (!props.isOpen) return null;
 
   return (
-    <div class="fixed inset-0 z-50">
-      <div class="fixed inset-0 bg-black/50" onClick={props.onClose} />
-      <div class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] bg-white rounded-lg shadow-lg">
+    <div class="fixed inset-0 z-50" onClick={(e) => e.stopPropagation()}>
+      <div 
+        class="fixed inset-0 bg-black/50" 
+        onClick={(e) => {
+          e.stopPropagation();
+          props.onClose();
+        }}
+      />
+
+      <div 
+        class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] bg-white rounded-lg shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div class="flex items-center justify-between p-4 border-b">
           <h2 class="text-lg font-semibold">
             {props.axis ? 'Edit Axis' : 'New Axis'}
           </h2>
           <button 
-            onClick={props.onClose}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              props.onClose();
+            }}
             class="text-gray-500 hover:text-gray-700 text-2xl leading-none"
           >
             ×
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} class="p-4 space-y-4">
+        <div class="p-4 space-y-4" onClick={(e) => e.stopPropagation()}>
           <div class="space-y-2">
             <label class="block text-sm font-medium text-gray-700">
               Engineering Units
@@ -82,9 +111,11 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
             <input
               type="text"
               value={properties().egu}
-              onInput={(e) => updateProperty('egu', e.currentTarget.value)}
+              onInput={(e) => {
+                e.stopPropagation();
+                updateProperty('egu', e.currentTarget.value);
+              }}
               class="w-full px-3 py-2 border rounded-md"
-              required
             />
           </div>
 
@@ -94,7 +125,10 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
             </label>
             <select
               value={properties().position}
-              onChange={(e) => updateProperty('position', e.currentTarget.value as 'left' | 'right')}
+              onChange={(e) => {
+                e.stopPropagation();
+                updateProperty('position', e.currentTarget.value as 'left' | 'right');
+              }}
               class="w-full px-3 py-2 border rounded-md"
             >
               <option value="left">Left</option>
@@ -107,7 +141,10 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
               type="checkbox"
               id="autoRange"
               checked={properties().autoRange}
-              onChange={(e) => updateProperty('autoRange', e.currentTarget.checked)}
+              onChange={(e) => {
+                e.stopPropagation();
+                updateProperty('autoRange', e.currentTarget.checked);
+              }}
               class="rounded border-gray-300"
             />
             <label for="autoRange" class="text-sm font-medium text-gray-700">
@@ -124,7 +161,10 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
                 <input
                   type="number"
                   value={properties().range?.low ?? 0}
-                  onInput={(e) => handleRangeChange('low', e.currentTarget.value)}
+                  onInput={(e) => {
+                    e.stopPropagation();
+                    handleRangeChange('low', e.currentTarget.value);
+                  }}
                   class="w-full px-3 py-2 border rounded-md"
                 />
               </div>
@@ -135,29 +175,29 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
                 <input
                   type="number"
                   value={properties().range?.high ?? 100}
-                  onInput={(e) => handleRangeChange('high', e.currentTarget.value)}
+                  onInput={(e) => {
+                    e.stopPropagation();
+                    handleRangeChange('high', e.currentTarget.value);
+                  }}
                   class="w-full px-3 py-2 border rounded-md"
                 />
               </div>
             </div>
           )}
-
+          
           <div class="flex justify-end gap-2 mt-6">
             <button
               type="button"
-              onClick={props.onClose}
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onClose();
+              }}
               class="px-4 py-2 text-gray-600 hover:text-gray-800"
             >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              Save
+              Close
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );

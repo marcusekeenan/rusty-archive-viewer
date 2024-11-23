@@ -226,6 +226,16 @@ export default function PenPropertiesDialog(props: PenPropertiesDialogProps) {
                 </div>
               </div>
             </div>
+            {/* Add Close Button */}
+            <div class="flex justify-end gap-2 mt-6 pt-4 border-t">
+              <button
+                type="button"
+                onClick={props.onClose}
+                class="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       </div>

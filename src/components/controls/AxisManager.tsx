@@ -1,6 +1,6 @@
-import { For, createSignal } from "solid-js";
+import { For, createSignal, Show } from "solid-js";
 import { AxisConfig } from "../chart/types";
-import { AxisPropertiesDialog } from "../AxisPropertiesDialog";
+import { AxisPropertiesDialog } from "./AxisPropertiesDialog";
 
 interface AxisManagerProps {
   axes: () => Map<string, AxisConfig>;
@@ -21,14 +21,22 @@ export default function AxisManager(props: AxisManagerProps) {
   
     const handleEditAxis = (e: Event, axis: AxisConfig) => {
       e.stopPropagation();
-      setEditingAxis(axis);
+      console.log("Opening edit dialog for axis:", axis);
+      setEditingAxis({...axis});
+    };
+
+    const handleAxisUpdate = (updatedAxis: AxisConfig) => {
+      props.onAxisEdit(updatedAxis);
+    };
+
+    const handleNewAxisUpdate = (newAxis: AxisConfig) => {
+      props.onAxisAdd(newAxis);
     };
   
     return (
       <div class="bg-white rounded-lg shadow-sm p-4">
         <h3 class="text-lg font-semibold mb-2">Y-Axes</h3>
         
-        {/* Axis List */}
         <div class="space-y-2 mb-4">
           <For each={Array.from(props.axes().values())}>
             {(axis) => (
@@ -102,26 +110,24 @@ export default function AxisManager(props: AxisManagerProps) {
           Add New Axis
         </button>
   
-        <AxisPropertiesDialog
-          isOpen={!!editingAxis()}
-          onClose={() => setEditingAxis(undefined)}
-          axis={editingAxis()}
-          existingAxes={props.axes()}
-          onSave={(updatedAxis) => {
-            props.onAxisEdit(updatedAxis);
-            setEditingAxis(undefined);
-          }}
-        />
-  
-        <AxisPropertiesDialog
-          isOpen={isNewAxisDialogOpen()}
-          onClose={() => setIsNewAxisDialogOpen(false)}
-          existingAxes={props.axes()}
-          onSave={(newAxis) => {
-            props.onAxisAdd(newAxis);
-            setIsNewAxisDialogOpen(false);
-          }}
-        />
+        <Show when={editingAxis()}>
+          <AxisPropertiesDialog
+            isOpen={true}
+            onClose={() => setEditingAxis(undefined)}
+            axis={editingAxis()}
+            existingAxes={props.axes()}
+            onSave={handleAxisUpdate}
+          />
+        </Show>
+
+        <Show when={isNewAxisDialogOpen()}>
+          <AxisPropertiesDialog
+            isOpen={true}
+            onClose={() => setIsNewAxisDialogOpen(false)}
+            existingAxes={props.axes()}
+            onSave={handleNewAxisUpdate}
+          />
+        </Show>
       </div>
     );
   }

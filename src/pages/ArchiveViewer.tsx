@@ -137,33 +137,33 @@ export default function ArchiveViewer() {
     return existing.length ? `${base}_${existing.length + 1}` : base;
   };
 
-  const findOrCreateAxis = (metadata: Meta): string => {
-    // First check for existing axis with same EGU
-    const existingAxis = Array.from(state.axes.values()).find(
-      (axis) => axis.egu.toLowerCase() === metadata.egu.toLowerCase()
-    );
+  // const findOrCreateAxis = (metadata: Meta): string => {
+  //   // First check for existing axis with same EGU
+  //   const existingAxis = Array.from(state.axes.values()).find(
+  //     (axis) => axis.egu.toLowerCase() === metadata.egu.toLowerCase()
+  //   );
 
-    if (existingAxis) {
-      return existingAxis.id;
-    }
+  //   if (existingAxis) {
+  //     return existingAxis.id;
+  //   }
 
-    // Create new axis
-    const axisId = `axis_${metadata.egu.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${Date.now()}`;
-    setState("axes", (axes) => {
-      const newAxes = new Map(axes);
-      newAxes.set(axisId, {
-        id: axisId,
-        egu: metadata.egu || "Unknown",
-        position: newAxes.size % 2 === 0 ? "left" : "right",
-        autoRange: true,
-        range: { low: 0, high: 100 },
-        pvs: new Set(),
-      });
-      return newAxes;
-    });
+  //   // Create new axis
+  //   const axisId = `axis_${metadata.egu.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${Date.now()}`;
+  //   setState("axes", (axes) => {
+  //     const newAxes = new Map(axes);
+  //     newAxes.set(axisId, {
+  //       id: axisId,
+  //       egu: metadata.egu || "Unknown",
+  //       position: newAxes.size % 2 === 0 ? "left" : "right",
+  //       autoRange: true,
+  //       range: { low: 0, high: 100 },
+  //       pvs: new Set(),
+  //     });
+  //     return newAxes;
+  //   });
 
-    return axisId;
-  };
+  //   return axisId;
+  // };
 
   const updatePVMetadata = (pvName: string, metadata: Meta) => {
     // Extract display limits from metadata
@@ -189,8 +189,8 @@ export default function ArchiveViewer() {
           id: axisId,
           egu,
           position: newAxes.size % 2 === 0 ? 'left' : 'right',
-          autoRange: false,
-          range: displayLimits,
+          autoRange: true, // Changed to true by default
+          range: displayLimits, // Still keep the display limits as reference
           pvs: new Set([pvName])
         });
         return newAxes;
@@ -293,20 +293,18 @@ export default function ArchiveViewer() {
 
   const fetchDataForPVs = async () => {
     if (state.selectedPVs.length === 0) return;
-
+  
     const timeRangeSeconds = Math.floor(
       (state.timeRange.end.getTime() - state.timeRange.start.getTime()) / 1000
     );
-
+  
     // Ensure we're using the current time as end for relative ranges
     const now = new Date();
-    const end =
-      state.liveModeConfig.mode === "rolling" ? now : state.timeRange.end;
-    const start =
-      state.liveModeConfig.mode === "rolling"
-        ? new Date(now.getTime() - timeRangeSeconds * 1000)
-        : state.timeRange.start;
-
+    const end = state.liveModeConfig.mode === "rolling" ? now : state.timeRange.end;
+    const start = state.liveModeConfig.mode === "rolling"
+      ? new Date(now.getTime() - timeRangeSeconds * 1000)
+      : state.timeRange.start;
+  
     setState("loading", true);
     try {
       const data = await fetchData(
@@ -320,16 +318,24 @@ export default function ArchiveViewer() {
           fetchLatestMetadata: true,
         }
       );
-
+  
+      // Filter out any points outside our exact time range
+      const filteredData = data.map(pvData => ({
+        ...pvData,
+        data: pvData.data.filter(point => 
+          point.timestamp >= start.getTime() && point.timestamp <= end.getTime()
+        )
+      }));
+  
       setState({
-        data,
+        data: filteredData,
         error: null,
         isConnected: true,
         lastRefresh: new Date(),
-        timeRange: { start, end }, // Update the time range
+        timeRange: { start, end }
       });
-
-      data.forEach((pvData) => {
+  
+      filteredData.forEach((pvData) => {
         if (pvData.meta) {
           updatePVMetadata(pvData.meta.name, pvData.meta);
         }
