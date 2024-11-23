@@ -399,22 +399,77 @@ export default function ArchiveViewer() {
   };
 
   const toggleLiveMode = async () => {
-    if (state.liveModeConfig.enabled) {
-      console.log("Stopping live mode");
-      await liveManager?.stop();
-      setState("liveModeConfig", "enabled", false);
-    } else {
-      console.log("Starting live mode");
-      liveManager = new LiveUpdateManager();
-      await liveManager.start({
-        pvs: state.selectedPVs.map((pv) => pv.name),
-        updateIntervalMs: state.liveModeConfig.updateInterval,
-        timezone: state.timezone,
-        onData: processLiveData,
-      });
-      setState("liveModeConfig", "enabled", true);
+  if (state.liveModeConfig.enabled) {
+    console.log("Stopping live mode");
+    await liveManager?.stop();
+    setState("liveModeConfig", "enabled", false);
+  } else {
+    console.log("Starting live mode");
+    
+    // First, fetch the gap between last historical data and now
+    const now = new Date();
+    const lastDataTime = state.data.reduce((latest, pv) => {
+      const pvLastPoint = pv.data[pv.data.length - 1];
+      return pvLastPoint ? Math.max(latest, pvLastPoint.timestamp) : latest;
+    }, state.timeRange.end.getTime());
+
+    if (now.getTime() - lastDataTime > 0) {
+      // Fetch gap data first
+      try {
+        const gapData = await fetchData(
+          state.selectedPVs.map(pv => pv.name),
+          new Date(lastDataTime),
+          now,
+          {
+            timezone: state.timezone,
+            mode: 'fixed',
+            operator: state.dataOperator,
+            fetchLatestMetadata: true,
+          }
+        );
+
+        // Merge gap data with existing data
+        setState("data", data => 
+          data.map(pvData => {
+            const gapPvData = gapData.find(g => g.meta.name === pvData.meta.name);
+            if (!gapPvData) return pvData;
+
+            return {
+              ...pvData,
+              data: [
+                ...pvData.data,
+                ...gapPvData.data.filter(point => 
+                  point.timestamp > pvData.data[pvData.data.length - 1].timestamp
+                )
+              ]
+            };
+          })
+        );
+      } catch (error) {
+        console.warn("Failed to fetch gap data:", error);
+      }
     }
-  };
+
+    // Start live updates after gap is filled
+    liveManager = new LiveUpdateManager();
+    await liveManager.start({
+      pvs: state.selectedPVs.map((pv) => pv.name),
+      updateIntervalMs: state.liveModeConfig.updateInterval,
+      timezone: state.timezone,
+      onData: processLiveData,
+    });
+    setState("liveModeConfig", "enabled", true);
+
+    // Update time range if in rolling mode
+    if (state.liveModeConfig.mode === "rolling") {
+      const duration = state.timeRange.end.getTime() - state.timeRange.start.getTime();
+      setState("timeRange", {
+        start: new Date(now.getTime() - duration),
+        end: now
+      });
+    }
+  }
+};
 
   onMount(() => {
     clearStoredConfigs();
@@ -491,13 +546,19 @@ export default function ArchiveViewer() {
                 const newPvs = s.selectedPVs.filter((p) => p.name !== pv);
                 const newVisible = new Set(s.visiblePVs);
                 newVisible.delete(pv);
-
+            
                 // Clean up axes
                 const axes = new Map(s.axes);
-                for (const axis of axes.values()) {
+                for (const [axisId, axis] of axes.entries()) {
+                  // Remove PV from axis
                   axis.pvs.delete(pv);
+                  
+                  // If axis has no PVs, remove it
+                  if (axis.pvs.size === 0) {
+                    axes.delete(axisId);
+                  }
                 }
-
+            
                 return {
                   selectedPVs: newPvs,
                   visiblePVs: newVisible,
