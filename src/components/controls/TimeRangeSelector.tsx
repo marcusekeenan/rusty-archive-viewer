@@ -31,10 +31,11 @@ const TimeRangeSelector = (props: TimeRangeSelectorProps) => {
 
   const timeRanges = [
     { value: 'custom', label: 'Custom Range' },
+    { value: '1m', label: 'Last 1 Minute' },
+    { value: '5m', label: 'Last 5 Minutes' },
     { value: '15m', label: 'Last 15 Minutes' },
     { value: '30m', label: 'Last 30 Minutes' },
     { value: '1h', label: 'Last Hour' },
-    { value: '3h', label: 'Last 3 Hours' },
     { value: '6h', label: 'Last 6 Hours' },
     { value: '12h', label: 'Last 12 Hours' },
     { value: '24h', label: 'Last 24 Hours' },
