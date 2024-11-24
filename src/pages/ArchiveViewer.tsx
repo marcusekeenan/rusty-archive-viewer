@@ -9,12 +9,12 @@ import {
 import { createStore } from "solid-js/store";
 import { ErrorBoundary } from "solid-js";
 
-import PVSelector from "../components/controls/PVSelector";
 import TimeRangeSelector from "../components/controls/TimeRangeSelector";
-import AxisManager from "../components/controls/AxisManager";
 import ControlPanel from "../components/controls/ControlPanel";
 import ChartJS from "../components/chart/ChartJS";
 import ConnectionStatus from "../components/controls/ConnectionStatus";
+
+import UnifiedManager from "../components/controls/UnifiedManager";
 
 import {
   fetchData,
@@ -483,12 +483,36 @@ export default function ArchiveViewer() {
 
   return (
     <ErrorBoundary fallback={(err) => <div>Error: {err.toString()}</div>}>
-      <div class="grid grid-cols-[300px_1fr_300px] gap-4 p-4 bg-gray-50 min-h-screen">
-        <div class="space-y-4">
-          <PVSelector
+      <div class="grid grid-cols-[350px_1fr_300px] gap-4 p-4 bg-gray-50 h-screen">
+        {/* Left Column - PV Management */}
+        <div class="flex flex-col h-full overflow-hidden">
+          <UnifiedManager
             selectedPVs={() => state.selectedPVs}
             visiblePVs={() => state.visiblePVs}
-            availableAxes={state.axes}
+            axes={() => state.axes}
+            onAxisEdit={(updatedAxis) => {
+              setState("axes", (axes) => {
+                const newAxes = new Map(axes);
+                newAxes.set(updatedAxis.id, updatedAxis);
+                return newAxes;
+              });
+            }}
+            onAxisAdd={(newAxis) => {
+              setState("axes", (axes) => {
+                const newAxes = new Map(axes);
+                newAxes.set(newAxis.id, newAxis);
+                return newAxes;
+              });
+            }}
+            onAxisRemove={(axisId) => {
+              setState("axes", (axes) => {
+                const axis = axes.get(axisId);
+                if (!axis || axis.pvs.size > 0) return axes;
+                const newAxes = new Map(axes);
+                newAxes.delete(axisId);
+                return newAxes;
+              });
+            }}
             onAddPV={async (pv, properties) => {
               setState("selectedPVs", (pvs) => [
                 ...pvs,
@@ -552,63 +576,39 @@ export default function ArchiveViewer() {
               });
             }}
           />
-
-          <AxisManager
-            axes={() => state.axes}
-            onAxisEdit={(updatedAxis) => {
-              setState("axes", (axes) => {
-                const newAxes = new Map(axes);
-                newAxes.set(updatedAxis.id, updatedAxis);
-                return newAxes;
-              });
-            }}
-            onAxisAdd={(newAxis) => {
-              setState("axes", (axes) => {
-                const newAxes = new Map(axes);
-                newAxes.set(newAxis.id, newAxis);
-                return newAxes;
-              });
-            }}
-            onAxisRemove={(axisId) => {
-              setState("axes", (axes) => {
-                const axis = axes.get(axisId);
-                if (!axis || axis.pvs.size > 0) return axes;
-                const newAxes = new Map(axes);
-                newAxes.delete(axisId);
-                return newAxes;
-              });
-            }}
-          />
         </div>
 
-        <div class="space-y-4">
-          <ControlPanel
-            liveModeConfig={() => state.liveModeConfig}
-            dataOperator={() => state.dataOperator}
-            loading={() => state.loading}
-            onLiveModeToggle={toggleLiveMode}
-            onLiveModeConfigChange={(config) => {
-              setState("liveModeConfig", config);
-              fetchDataForPVs();
-            }}
-            onDataOperatorChange={(operator) => {
-              setState("dataOperator", operator);
-              fetchDataForPVs();
-            }}
-            onRefresh={fetchDataForPVs}
-            onExport={() => {}} // Removed export functionality
-          />
+        {/* Middle Column - Chart */}
+        <div class="flex flex-col h-full gap-4">
+          <div class="flex-none">
+            <ControlPanel
+              liveModeConfig={() => state.liveModeConfig}
+              dataOperator={() => state.dataOperator}
+              loading={() => state.loading}
+              onLiveModeToggle={toggleLiveMode}
+              onLiveModeConfigChange={(config) => {
+                setState("liveModeConfig", config);
+                fetchDataForPVs();
+              }}
+              onDataOperatorChange={(operator) => {
+                setState("dataOperator", operator);
+                fetchDataForPVs();
+              }}
+              onRefresh={fetchDataForPVs}
+              onExport={() => {}}
+            />
+          </div>
 
-          <div class="bg-white rounded-lg shadow-sm p-4">
-            <div class="w-full h-[calc(100vh-280px)] relative">
-              <Show
-                when={visibleData().length > 0}
-                fallback={
-                  <div class="absolute inset-0 flex items-center justify-center text-gray-400">
-                    No data to display
-                  </div>
-                }
-              >
+          <div class="flex-grow bg-white rounded-lg shadow-sm p-4 min-h-0">
+            <Show
+              when={visibleData().length > 0}
+              fallback={
+                <div class="h-full flex items-center justify-center text-gray-400">
+                  No data to display
+                </div>
+              }
+            >
+              <div class="h-full">
                 <ChartJS
                   data={visibleData()}
                   pvs={state.selectedPVs.filter((pv) =>
@@ -618,12 +618,13 @@ export default function ArchiveViewer() {
                   timezone={state.timezone}
                   axes={state.axes}
                 />
-              </Show>
-            </div>
+              </div>
+            </Show>
           </div>
         </div>
 
-        <div class="space-y-4">
+        {/* Right Column - Time Range */}
+        <div class="flex flex-col h-full">
           <TimeRangeSelector
             onChange={(start, end, timezone) => {
               setState({
