@@ -28,13 +28,13 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
   const [isNewAxisDialogOpen, setIsNewAxisDialogOpen] = createSignal(false);
   const [editingPV, setEditingPV] = createSignal<string | null>(null);
   const [searchText, setSearchText] = createSignal("");
-  const [inputMode, setInputMode] = createSignal<'single' | 'multi'>('single');
+  const [inputMode, setInputMode] = createSignal<"single" | "multi">("single");
 
   createEffect(() => {
     const axisIds = Array.from(props.axes().keys());
-    setExpandedAxes(prev => {
+    setExpandedAxes((prev) => {
       const newSet = new Set(prev);
-      axisIds.forEach(id => newSet.add(id));
+      axisIds.forEach((id) => newSet.add(id));
       return newSet;
     });
   });
@@ -42,8 +42,8 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
   const pvsByAxis = () => {
     const grouped = new Map<string, PVWithProperties[]>();
     const unassigned: PVWithProperties[] = [];
-    
-    props.selectedPVs().forEach(pv => {
+
+    props.selectedPVs().forEach((pv) => {
       if (pv.axisId) {
         const pvs = grouped.get(pv.axisId) || [];
         pvs.push(pv);
@@ -52,15 +52,15 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
         unassigned.push(pv);
       }
     });
-    
+
     return { grouped, unassigned };
   };
 
   const parsePVs = (input: string): string[] => {
     return input
       .split(/[,\n]/)
-      .map(pv => pv.trim())
-      .filter(pv => pv.length > 0);
+      .map((pv) => pv.trim())
+      .filter((pv) => pv.length > 0);
   };
 
   const handleSearch = (e: Event) => {
@@ -69,13 +69,16 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
     if (!input) return;
 
     const pvNames = parsePVs(input);
-    const existingPVs = new Set(props.selectedPVs().map(pv => pv.name));
+    const existingPVs = new Set(props.selectedPVs().map((pv) => pv.name));
 
-    pvNames.forEach(pvName => {
+    pvNames.forEach((pvName) => {
       if (!existingPVs.has(pvName)) {
         const newProperties: PenProperties = {
           ...DEFAULT_PEN_PROPERTIES,
-          color: getNextColor([...props.selectedPVs(), { name: pvName, pen: DEFAULT_PEN_PROPERTIES }])
+          color: getNextColor([
+            ...props.selectedPVs(),
+            { name: pvName, pen: DEFAULT_PEN_PROPERTIES },
+          ]),
         };
         props.onAddPV(pvName, newProperties);
       }
@@ -88,17 +91,23 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
     <div class="bg-white rounded-lg shadow-sm p-4">
       <form onSubmit={handleSearch} class="mb-6">
         <div class="flex justify-between items-center mb-2">
-          <label class="text-sm font-medium text-gray-700">Add Process Variables</label>
+          <label class="text-sm font-medium text-gray-700">
+            Add Process Variables
+          </label>
           <button
             type="button"
-            onClick={() => setInputMode(prev => prev === 'single' ? 'multi' : 'single')}
+            onClick={() =>
+              setInputMode((prev) => (prev === "single" ? "multi" : "single"))
+            }
             class="text-xs text-blue-500 hover:text-blue-600"
           >
-            {inputMode() === 'single' ? 'Switch to Multi-line' : 'Switch to Single-line'}
+            {inputMode() === "single"
+              ? "Switch to Multi-line"
+              : "Switch to Single-line"}
           </button>
         </div>
-        
-        {inputMode() === 'single' ? (
+
+        {inputMode() === "single" ? (
           <div class="flex gap-2">
             <input
               type="text"
@@ -136,7 +145,7 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
       <div class="space-y-4">
         <div class="flex justify-between items-center">
           <h3 class="text-lg font-semibold">Axes & Process Variables</h3>
-          <button 
+          <button
             type="button"
             onClick={() => setIsNewAxisDialogOpen(true)}
             class="inline-flex items-center gap-1 text-sm px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600"
@@ -157,7 +166,7 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
                       <button
                         type="button"
                         onClick={() => {
-                          setExpandedAxes(prev => {
+                          setExpandedAxes((prev) => {
                             const newSet = new Set(prev);
                             if (newSet.has(axisId)) {
                               newSet.delete(axisId);
@@ -169,9 +178,9 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
                         }}
                         class="flex items-center gap-2"
                       >
-                        <TbChevronRight 
+                        <TbChevronRight
                           class={`w-4 h-4 transition-transform ${
-                            expandedAxes().has(axisId) ? 'rotate-90' : ''
+                            expandedAxes().has(axisId) ? "rotate-90" : ""
                           }`}
                         />
                         <span class="font-medium">{axis.egu}</span>
@@ -180,12 +189,12 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
                         {axis.position}
                       </span>
                       <span class="text-xs text-gray-500">
-                        {axisPVs.length} PV{axisPVs.length !== 1 ? 's' : ''}
+                        {axisPVs.length} PV{axisPVs.length !== 1 ? "s" : ""}
                       </span>
                     </div>
-                    
+
                     <div class="flex gap-2">
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setEditingAxis(axis)}
                         class="p-1 text-blue-500 hover:text-blue-700 rounded"
@@ -217,14 +226,19 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
                                   <input
                                     type="checkbox"
                                     checked={props.visiblePVs().has(pv.name)}
-                                    onChange={(e) => props.onVisibilityChange(pv.name, e.currentTarget.checked)}
+                                    onChange={(e) =>
+                                      props.onVisibilityChange(
+                                        pv.name,
+                                        e.currentTarget.checked
+                                      )
+                                    }
                                     class="w-4 h-4 cursor-pointer"
                                     style={{
                                       "accent-color": pv.pen.color,
                                     }}
                                   />
-                                  <span 
-                                    class={`flex-grow truncate ${props.visiblePVs().has(pv.name) ? '' : 'text-gray-400'}`}
+                                  <span
+                                    class={`flex-grow truncate ${props.visiblePVs().has(pv.name) ? "" : "text-gray-400"}`}
                                     title={pv.name}
                                   >
                                     {pv.name}
@@ -274,14 +288,19 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
                           <input
                             type="checkbox"
                             checked={props.visiblePVs().has(pv.name)}
-                            onChange={(e) => props.onVisibilityChange(pv.name, e.currentTarget.checked)}
+                            onChange={(e) =>
+                              props.onVisibilityChange(
+                                pv.name,
+                                e.currentTarget.checked
+                              )
+                            }
                             class="w-4 h-4 cursor-pointer"
                             style={{
                               "accent-color": pv.pen.color,
                             }}
                           />
-                          <span 
-                            class={`flex-grow truncate ${props.visiblePVs().has(pv.name) ? '' : 'text-gray-400'}`}
+                          <span
+                            class={`flex-grow truncate ${props.visiblePVs().has(pv.name) ? "" : "text-gray-400"}`}
                             title={pv.name}
                           >
                             {pv.name}
@@ -311,42 +330,50 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
         </div>
       </div>
 
+      {/* Dialogs */}
       <Show when={editingAxis()}>
-        <AxisPropertiesDialog
-          isOpen={true}
-          onClose={() => setEditingAxis(undefined)}
-          axis={editingAxis()}
-          existingAxes={props.axes()}
-          onSave={(updatedAxis) => {
-            props.onAxisEdit(updatedAxis);
-            setEditingAxis(undefined);
-          }}
-        />
-      </Show>
+  <AxisPropertiesDialog
+    isOpen={true}
+    onClose={() => setEditingAxis(undefined)}
+    axis={editingAxis()}
+    existingAxes={props.axes()}
+    onSave={(updatedAxis) => {
+      props.onAxisEdit(updatedAxis);
+      // Note: Don't close the dialog here
+    }}
+  />
+</Show>
 
-      <Show when={isNewAxisDialogOpen()}>
-        <AxisPropertiesDialog
-          isOpen={true}
-          onClose={() => setIsNewAxisDialogOpen(false)}
-          existingAxes={props.axes()}
-          onSave={(newAxis) => {
-            props.onAxisAdd(newAxis);
-            setIsNewAxisDialogOpen(false);
-          }}
-        />
-      </Show>
+<Show when={isNewAxisDialogOpen()}>
+  <AxisPropertiesDialog
+    isOpen={true}
+    onClose={() => setIsNewAxisDialogOpen(false)}
+    existingAxes={props.axes()}
+    onSave={(newAxis) => {
+      props.onAxisAdd(newAxis);
+      // Note: Don't close the dialog here
+    }}
+  />
+</Show>
 
       <Show when={editingPV()}>
         <PenPropertiesDialog
           isOpen={true}
           onClose={() => setEditingPV(null)}
           pv={editingPV()!}
-          properties={props.selectedPVs().find(p => p.name === editingPV())?.pen || DEFAULT_PEN_PROPERTIES}
+          properties={
+            props.selectedPVs().find((p) => p.name === editingPV())?.pen ||
+            DEFAULT_PEN_PROPERTIES
+          }
           availableAxes={props.axes()}
-          selectedAxisId={props.selectedPVs().find(p => p.name === editingPV())?.axisId}
+          selectedAxisId={
+            props.selectedPVs().find((p) => p.name === editingPV())?.axisId
+          }
           onSave={(properties, axisId) => {
+            // First update the PV
             props.onUpdatePV(editingPV()!, properties, axisId);
-            setEditingPV(null);
+            // Then close the dialog after a short delay
+            setTimeout(() => setEditingPV(null), 100);
           }}
         />
       </Show>

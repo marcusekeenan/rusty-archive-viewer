@@ -496,6 +496,7 @@ export default function ArchiveViewer() {
                 newAxes.set(updatedAxis.id, updatedAxis);
                 return newAxes;
               });
+              // No need to close anything here
             }}
             onAxisAdd={(newAxis) => {
               setState("axes", (axes) => {
@@ -522,7 +523,7 @@ export default function ArchiveViewer() {
                 },
               ]);
               setState("visiblePVs", (pvs) => new Set([...pvs, pv]));
-
+            
               try {
                 const metadata = await getPVMetadata(pv);
                 if (metadata) {
@@ -538,8 +539,23 @@ export default function ArchiveViewer() {
                 };
                 updatePVMetadata(pv, defaultMetadata);
               }
-
-              fetchDataForPVs();
+            
+              await fetchDataForPVs();
+            
+              // If we're in live mode, restart the live updates with all PVs
+              if (state.liveModeConfig.enabled) {
+                // Stop current live updates
+                await liveManager?.stop();
+                
+                // Restart with all PVs including the new one
+                liveManager = new LiveUpdateManager();
+                await liveManager.start({
+                  pvs: [...state.selectedPVs, { name: pv, pen: properties }].map(pv => pv.name),
+                  updateIntervalMs: state.liveModeConfig.updateInterval,
+                  timezone: state.timezone,
+                  onData: processLiveData,
+                });
+              }
             }}
             onUpdatePV={(pv, properties, axisId) => {
               setState("selectedPVs", (pvs) =>
@@ -567,6 +583,24 @@ export default function ArchiveViewer() {
                   axes,
                 };
               });
+            
+              // If we're in live mode and there are still PVs, restart live updates
+              if (state.liveModeConfig.enabled && state.selectedPVs.length > 0) {
+                const restartLiveUpdates = async () => {
+                  await liveManager?.stop();
+                  liveManager = new LiveUpdateManager();
+                  await liveManager.start({
+                    pvs: state.selectedPVs.map(pv => pv.name),
+                    updateIntervalMs: state.liveModeConfig.updateInterval,
+                    timezone: state.timezone,
+                    onData: processLiveData,
+                  });
+                };
+                restartLiveUpdates();
+              } else if (state.selectedPVs.length === 0) {
+                // If no PVs left, just stop live updates
+                liveManager?.stop();
+              }
             }}
             onVisibilityChange={(pv, isVisible) => {
               setState("visiblePVs", (pvs) => {
