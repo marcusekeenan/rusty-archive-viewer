@@ -3,7 +3,6 @@
 
 use super::api::{ArchiverClient, OptimizationLevel, TimeRangeMode};
 use crate::archiver::{export::*, types::*};
-use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{Manager, Window, WindowBuilder, WindowUrl};

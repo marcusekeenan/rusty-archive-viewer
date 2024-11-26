@@ -56,21 +56,18 @@ export default function ControlPanel(props: ControlPanelProps) {
           </button>
 
           <button
-            onClick={props.onRefresh}
-            disabled={props.loading()}
-            class="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 
-                   rounded-md text-sm font-medium hover:bg-blue-100 
-                   disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {props.loading() ? (
-              <>
-                <div class="w-4 h-4 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />
-                <span>Loading...</span>
-              </>
-            ) : (
-              <span>Refresh</span>
-            )}
-          </button>
+  onClick={props.onRefresh}
+  disabled={props.loading()}
+  class="inline-flex items-center justify-center px-4 py-1.5 bg-blue-50 text-blue-700 
+         rounded-md text-sm font-medium hover:bg-blue-100 w-24
+         disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+>
+  {props.loading() ? (
+    <div class="w-4 h-4 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />
+  ) : (
+    <span>Refresh</span>
+  )}
+</button>
 
           <button
             onClick={() => props.onExport('visible')}

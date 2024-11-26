@@ -76,8 +76,8 @@
       {
         "label": "main",
         "url": "index.html",
-        "height": 800,
-        "width": 1200
+        "height": 1000,
+        "width": 1600
       },
       {
         "label": "debug",

@@ -12,12 +12,11 @@ function App() {
   };
 
   return (
-    <div class="min-h-screen bg-gray-100">
+    <div class="h-screen flex flex-col bg-gray-100">
       {/* Header */}
-      <header class="fixed top-0 w-full bg-blue-600 text-white shadow-lg z-50">
+      <header class="flex-none bg-blue-600 text-white shadow-lg">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div class="flex justify-between items-center h-16">
-            {/* Logo and Title */}
             <div>
               <h1 class="text-2xl font-bold">EPICS Archive Viewer</h1>
               <p class="text-sm text-blue-100">
@@ -25,7 +24,6 @@ function App() {
               </p>
             </div>
 
-            {/* Toolbar */}
             <div class="flex items-center gap-4">
               <button
                 onClick={toggleDebugWindow}
@@ -43,7 +41,7 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main class="pt-20">
+      <main class="flex-1 min-h-0">
         <ArchiveViewer />
       </main>
     </div>

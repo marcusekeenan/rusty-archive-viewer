@@ -891,4 +891,168 @@ mod tests {
             "All cache entries should be valid"
         );
     }
+    #[tokio::test]
+async fn inspect_raw_vs_json_data() {
+    let client = ArchiverClient::new().unwrap();
+    let pv = "CTE:PSI5:5504:TEMP";
+    
+    // Get both JSON and RAW data for comparison
+    for format in ["json", "raw"] {
+        let url = client.build_url(
+            &format!("getData.{}", format),
+            &[
+                ("pv", pv),
+                ("from", "2024-11-25T23:19:34-08:00"),
+                ("to", "2024-11-25T23:19:39-08:00"),
+                ("fetchLatestMetadata", "true"),
+            ]
+        ).unwrap();
+
+        println!("\n=== Testing {} format ===", format.to_uppercase());
+        println!("URL: {}", url);
+
+        let response = client.client
+            .get(url)
+            .send()
+            .await
+            .expect("Failed to get response");
+
+        println!("Status: {}", response.status());
+        println!("Headers: {:#?}", response.headers());
+
+        if format == "json" {
+            let text = response.text().await.unwrap();
+            println!("\nJSON Response (first 1000 chars):");
+            println!("{}", &text[..text.len().min(1000)]);
+        } else {
+            let bytes = response.bytes().await.unwrap();
+            println!("\nRAW Response:");
+            println!("Total bytes: {}", bytes.len());
+            println!("\nFirst 64 bytes as hex:");
+            for (i, chunk) in bytes[..64.min(bytes.len())].chunks(16).enumerate() {
+                print!("{:04x}  ", i * 16);
+                for b in chunk {
+                    print!("{:02x} ", b);
+                }
+                println!();
+            }
+            
+            println!("\nPossible ASCII interpretation:");
+            for chunk in bytes[..64.min(bytes.len())].chunks(16) {
+                print!("      ");
+                for &b in chunk {
+                    if b.is_ascii_graphic() || b == b' ' {
+                        print!("  {} ", b as char);
+                    } else {
+                        print!(" .. ");
+                    }
+                }
+                println!();
+            }
+        }
+    }
+}
+#[tokio::test]
+async fn benchmark_formats() {
+    let client = ArchiverClient::new().unwrap();
+    let pv = "CTE:PSI5:5504:TEMP";
+    
+    // Get 24 hours of data
+    let end = Utc::now();
+    let start = end - chrono::Duration::hours(24);
+    
+    let formats = ["json", "raw"];
+    for format in formats {
+        let timer = std::time::Instant::now();
+        
+        let url = client.build_url(
+            &format!("getData.{}", format),
+            &[
+                ("pv", pv),
+                ("from", &start.to_rfc3339()),
+                ("to", &end.to_rfc3339()),
+                ("fetchLatestMetadata", "true"),
+            ]
+        ).unwrap();
+
+        println!("\n=== Testing {} format ===", format.to_uppercase());
+        println!("URL: {}", url);
+        
+        // Make request and measure time
+        let response = client.client
+            .get(url)
+            .send()
+            .await
+            .expect("Failed to get response");
+            
+        println!("Initial response time: {:?}", timer.elapsed());
+        
+        // Get full payload and measure size
+        let payload = if format == "json" {
+            let text = response.text().await.unwrap();
+            println!("JSON size: {} bytes", text.len());
+            println!("Parsing time: {:?}", timer.elapsed());
+        } else {
+            let bytes = response.bytes().await.unwrap();
+            println!("RAW size: {} bytes", bytes.len());
+            println!("Transfer time: {:?}", timer.elapsed());
+        };
+        
+        println!("Total time: {:?}", timer.elapsed());
+        
+        // Give some time between requests
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+}
+
+#[tokio::test]
+async fn inspect_raw_metadata() {
+    let client = ArchiverClient::new().unwrap();
+    let pv = "CTE:PSI5:5504:TEMP";
+    
+    let url = client.build_url(
+        "getData.raw",
+        &[
+            ("pv", pv),
+            ("fetchLatestMetadata", "true"),
+        ]
+    ).unwrap();
+
+    println!("Metadata URL: {}", url);
+    
+    let response = client.client
+        .get(url)
+        .send()
+        .await
+        .expect("Failed to get response");
+        
+    let bytes = response.bytes().await.unwrap();
+    
+    println!("\nMetadata RAW Response:");
+    println!("Total bytes: {}", bytes.len());
+    println!("\nFirst 128 bytes as hex with ASCII:");
+    for (i, chunk) in bytes[..128.min(bytes.len())].chunks(16).enumerate() {
+        // Print hex
+        print!("{:04x}  ", i * 16);
+        for b in chunk {
+            print!("{:02x} ", b);
+        }
+        
+        // Fill remaining space if chunk is less than 16 bytes
+        for _ in chunk.len()..16 {
+            print!("   ");
+        }
+        
+        // Print ASCII interpretation
+        print!(" |");
+        for &b in chunk {
+            if b.is_ascii_graphic() || b == b' ' {
+                print!("{}", b as char);
+            } else {
+                print!(".");
+            }
+        }
+        println!("|");
+    }
+}
 }

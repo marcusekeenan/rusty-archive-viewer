@@ -167,37 +167,47 @@ export default function ArchiveViewer() {
       const newData = s.data.map((pvData) => {
         const newPoint = pointValues[pvData.meta.name];
         if (!newPoint) return pvData;
-  
-        const value = typeof newPoint.val === "number"
-          ? newPoint.val
-          : Array.isArray(newPoint.val)
-            ? newPoint.val[0]
-            : null;
+
+        const value =
+          typeof newPoint.val === "number"
+            ? newPoint.val
+            : Array.isArray(newPoint.val)
+              ? newPoint.val[0]
+              : null;
         if (value === null) return pvData;
-  
-        const timestamp = newPoint.secs * 1000 + (newPoint.nanos ? newPoint.nanos / 1_000_000 : 0);
+
+        const timestamp =
+          newPoint.secs * 1000 +
+          (newPoint.nanos ? newPoint.nanos / 1_000_000 : 0);
         const lastPoint = pvData.data[pvData.data.length - 1];
-  
+
         // Don't add points if:
         // 1. We already have this exact timestamp
         // 2. We have a point with the same value and it's within the update interval
         if (lastPoint) {
           const timeDiff = timestamp - lastPoint.timestamp;
           const sameValue = Math.abs(lastPoint.value - value) < 1e-10; // Use small epsilon for float comparison
-          
-          if (timestamp === lastPoint.timestamp || 
-              (sameValue && timeDiff < s.liveModeConfig.updateInterval)) {
+
+          if (
+            timestamp === lastPoint.timestamp ||
+            (sameValue && timeDiff < s.liveModeConfig.updateInterval)
+          ) {
             return pvData;
           }
         }
-  
+
         let newPvData = { ...pvData };
-        const cutoffTime = s.liveModeConfig.mode === "rolling"
-          ? Date.now() - (s.timeRange.end.getTime() - s.timeRange.start.getTime())
-          : 0;
-  
+        const cutoffTime =
+          s.liveModeConfig.mode === "rolling"
+            ? Date.now() -
+              (s.timeRange.end.getTime() - s.timeRange.start.getTime())
+            : 0;
+
         // If there's a significant gap between points, add an interpolation point
-        if (lastPoint && (timestamp - lastPoint.timestamp) > s.liveModeConfig.updateInterval * 2) {
+        if (
+          lastPoint &&
+          timestamp - lastPoint.timestamp > s.liveModeConfig.updateInterval * 2
+        ) {
           // Only add interpolation if the value changed
           if (Math.abs(lastPoint.value - value) > 1e-10) {
             const interpolationPoint = {
@@ -213,7 +223,7 @@ export default function ArchiveViewer() {
             newPvData.data = [...pvData.data, interpolationPoint];
           }
         }
-  
+
         // Add the new point
         const newPointData = {
           timestamp,
@@ -225,29 +235,35 @@ export default function ArchiveViewer() {
           stddev: 0,
           count: 1,
         };
-  
+
         newPvData.data = [...(newPvData.data || pvData.data), newPointData];
-  
+
         // Clean up old points in rolling mode
         if (s.liveModeConfig.mode === "rolling") {
-          newPvData.data = newPvData.data.filter(point => point.timestamp >= cutoffTime);
+          newPvData.data = newPvData.data.filter(
+            (point) => point.timestamp >= cutoffTime
+          );
         }
-  
+
         // Sort points to ensure correct order
         newPvData.data.sort((a, b) => a.timestamp - b.timestamp);
-  
+
         return newPvData;
       });
-  
+
       const now = new Date();
       return {
         data: newData,
-        timeRange: s.liveModeConfig.mode === "rolling"
-          ? {
-              start: new Date(now.getTime() - (s.timeRange.end.getTime() - s.timeRange.start.getTime())),
-              end: now,
-            }
-          : { ...s.timeRange, end: now },
+        timeRange:
+          s.liveModeConfig.mode === "rolling"
+            ? {
+                start: new Date(
+                  now.getTime() -
+                    (s.timeRange.end.getTime() - s.timeRange.start.getTime())
+                ),
+                end: now,
+              }
+            : { ...s.timeRange, end: now },
         lastRefresh: now,
       };
     });
@@ -483,9 +499,9 @@ export default function ArchiveViewer() {
 
   return (
     <ErrorBoundary fallback={(err) => <div>Error: {err.toString()}</div>}>
-      <div class="grid grid-cols-[350px_1fr_300px] gap-4 p-4 bg-gray-50 h-screen">
+      <div class="grid grid-cols-[350px_1fr_300px] gap-4 p-4 bg-gray-50 h-full overflow-hidden">
         {/* Left Column - PV Management */}
-        <div class="flex flex-col h-full overflow-hidden">
+        <div class="overflow-auto">
           <UnifiedManager
             selectedPVs={() => state.selectedPVs}
             visiblePVs={() => state.visiblePVs}
@@ -496,7 +512,6 @@ export default function ArchiveViewer() {
                 newAxes.set(updatedAxis.id, updatedAxis);
                 return newAxes;
               });
-              // No need to close anything here
             }}
             onAxisAdd={(newAxis) => {
               setState("axes", (axes) => {
@@ -523,7 +538,7 @@ export default function ArchiveViewer() {
                 },
               ]);
               setState("visiblePVs", (pvs) => new Set([...pvs, pv]));
-            
+
               try {
                 const metadata = await getPVMetadata(pv);
                 if (metadata) {
@@ -539,18 +554,17 @@ export default function ArchiveViewer() {
                 };
                 updatePVMetadata(pv, defaultMetadata);
               }
-            
+
               await fetchDataForPVs();
-            
-              // If we're in live mode, restart the live updates with all PVs
+
               if (state.liveModeConfig.enabled) {
-                // Stop current live updates
                 await liveManager?.stop();
-                
-                // Restart with all PVs including the new one
                 liveManager = new LiveUpdateManager();
                 await liveManager.start({
-                  pvs: [...state.selectedPVs, { name: pv, pen: properties }].map(pv => pv.name),
+                  pvs: [
+                    ...state.selectedPVs,
+                    { name: pv, pen: properties },
+                  ].map((pv) => pv.name),
                   updateIntervalMs: state.liveModeConfig.updateInterval,
                   timezone: state.timezone,
                   onData: processLiveData,
@@ -583,14 +597,16 @@ export default function ArchiveViewer() {
                   axes,
                 };
               });
-            
-              // If we're in live mode and there are still PVs, restart live updates
-              if (state.liveModeConfig.enabled && state.selectedPVs.length > 0) {
+
+              if (
+                state.liveModeConfig.enabled &&
+                state.selectedPVs.length > 0
+              ) {
                 const restartLiveUpdates = async () => {
                   await liveManager?.stop();
                   liveManager = new LiveUpdateManager();
                   await liveManager.start({
-                    pvs: state.selectedPVs.map(pv => pv.name),
+                    pvs: state.selectedPVs.map((pv) => pv.name),
                     updateIntervalMs: state.liveModeConfig.updateInterval,
                     timezone: state.timezone,
                     onData: processLiveData,
@@ -598,7 +614,6 @@ export default function ArchiveViewer() {
                 };
                 restartLiveUpdates();
               } else if (state.selectedPVs.length === 0) {
-                // If no PVs left, just stop live updates
                 liveManager?.stop();
               }
             }}
@@ -613,8 +628,8 @@ export default function ArchiveViewer() {
         </div>
 
         {/* Middle Column - Chart */}
-        <div class="flex flex-col h-full gap-4">
-          <div class="flex-none">
+        <div class="flex flex-col h-full overflow-hidden">
+          <div class="flex-none mb-4">
             <ControlPanel
               liveModeConfig={() => state.liveModeConfig}
               dataOperator={() => state.dataOperator}
@@ -633,7 +648,7 @@ export default function ArchiveViewer() {
             />
           </div>
 
-          <div class="flex-grow bg-white rounded-lg shadow-sm p-4 min-h-0">
+          <div class="flex-1 min-h-0 bg-white rounded-lg shadow-sm">
             <Show
               when={visibleData().length > 0}
               fallback={
@@ -642,7 +657,9 @@ export default function ArchiveViewer() {
                 </div>
               }
             >
-              <div class="h-full">
+              <div class="h-full p-4 pb-4">
+                {" "}
+                {/* Added more bottom padding */}
                 <ChartJS
                   data={visibleData()}
                   pvs={state.selectedPVs.filter((pv) =>
@@ -658,7 +675,7 @@ export default function ArchiveViewer() {
         </div>
 
         {/* Right Column - Time Range */}
-        <div class="flex flex-col h-full">
+        <div class="overflow-auto">
           <TimeRangeSelector
             onChange={(start, end, timezone) => {
               setState({
