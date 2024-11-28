@@ -1,60 +1,36 @@
-// main.rs
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use rusty_archive_viewer::archiver::commands::*;
-use tauri::{Manager, Window, WindowUrl};
+use rusty_archive_viewer::{AppState, Config, commands};
+use tauri::Manager;
 
-/// Main entry point for the application
 fn main() {
     let context = tauri::generate_context!();
+    let config = Config::default();
+    let state = AppState::new(config);
 
     tauri::Builder::default()
-        // Register all command handlers
         .invoke_handler(tauri::generate_handler![
-            // Data retrieval commands
-            fetch_data,         // Historical data
-            fetch_data_at_time, // Point-in-time data
-            // Metadata and validation commands
-            get_pv_metadata, // PV metadata
-            validate_pvs,    // PV validation
-            get_pv_status,   // PV status
-            test_connection, // Connection testing
-            // Export and utility commands
-            export_data,         // Data export
-            toggle_debug_window, // Debug interface
-            start_live_updates,
-            stop_live_updates,
+            commands::fetch_data,
+            commands::fetch_latest,
+            commands::test_connection,
+            commands::get_pv_metadata,  // Add this line
         ])
-        // Initial setup
+        .manage(state)
         .setup(|app| {
-            // Enable DevTools in debug mode
             #[cfg(debug_assertions)]
             {
                 if let Some(window) = app.get_window("main") {
                     window.open_devtools();
-
-                    // Log application startup in debug mode
-                    println!("Application started in debug mode");
+                    println!("Development mode active - LCLS Archiver Viewer");
                 }
             }
-
             Ok(())
         })
-        // Menu configuration
         .menu(if cfg!(target_os = "macos") {
             tauri::Menu::os_default(&context.package_info().name)
         } else {
             tauri::Menu::default()
         })
-        // Error handling and window management settings
-        .on_window_event(|event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
-                // Handle window close events
-                #[cfg(debug_assertions)]
-                println!("Window close requested");
-            }
-        })
-        // Run the application
         .run(context)
         .expect("Failed to start application");
 }

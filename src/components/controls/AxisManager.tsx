@@ -49,7 +49,7 @@ export default function AxisManager(props: AxisManagerProps) {
                     )}
                     class="flex items-center gap-2 text-left flex-1"
                   >
-                    <span class="font-medium">{axis.egu}</span>
+                    <span class="font-medium">{axis.EGU}</span>
                     <span class="text-xs px-1.5 py-0.5 bg-gray-200 rounded">
                       {axis.position}
                     </span>

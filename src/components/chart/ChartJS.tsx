@@ -32,7 +32,7 @@ ChartJS.register(
 
 interface Meta {
   name: string;
-  egu: string;
+  EGU: string;
   description?: string;
   precision?: number;
   display_limits?: {
@@ -93,7 +93,7 @@ export default function EPICSChart(props: ChartProps) {
       };
     }
 
-    if (meta.egu === '%') {
+    if (meta.EGU === '%') {
       return { min: 0, max: 100 };
     }
 
@@ -116,7 +116,7 @@ export default function EPICSChart(props: ChartProps) {
 
       return {
         type: 'line' as const,
-        label: `${pvData.meta.name} (${pvData.meta.egu || ''})`,
+        label: `${pvData.meta.name} (${pvData.meta.EGU || ''})`,
         data: points,
         yAxisID: pvInfo.axisId || 'default',
         borderColor: pvInfo.pen.color,
@@ -150,7 +150,7 @@ export default function EPICSChart(props: ChartProps) {
             position: axis.position || 'left',
             title: {
               display: true,
-              text: axis.egu,
+              text: axis.EGU,
               font: { size: 12 },
               color: '#666'
             },
@@ -239,7 +239,7 @@ export default function EPICSChart(props: ChartProps) {
               label: ctx => {
                 if (!ctx.dataset.yAxisID) return '';
                 const axis = props.axes.get(ctx.dataset.yAxisID);
-                return `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} ${axis?.egu || ''}`;
+                return `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} ${axis?.EGU || ''}`;
               }
             }
           },

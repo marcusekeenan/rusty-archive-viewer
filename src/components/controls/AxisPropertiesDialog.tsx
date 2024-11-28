@@ -15,7 +15,7 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
   const [properties, setProperties] = createSignal<AxisConfig>(
     props.axis || {
       id: `axis_${Date.now()}`,
-      egu: '',
+      EGU: '',
       position: 'left',
       autoRange: true,
       range: { low: 0, high: 100 },
@@ -106,8 +106,8 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
             </label>
             <input
               type="text"
-              value={properties().egu}
-              onInput={(e) => updateProperty('egu', e.currentTarget.value)}
+              value={properties().EGU}
+              onInput={(e) => updateProperty('EGU', e.currentTarget.value)}
               class="w-full px-3 py-2 border rounded-md"
             />
           </div>

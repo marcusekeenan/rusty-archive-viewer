@@ -1,198 +1,47 @@
-// archiverApi.ts
-
 import { invoke } from "@tauri-apps/api/tauri";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import {
-    Meta,
-    NormalizedPVData,
-    PointValue,
-    ExtendedFetchOptions,
-    DataFormat,
-    DetailedPVStatus,
-    LiveUpdateConfig
-} from './types';
+import type { Meta, Point, PVData, PVMetadata } from '../types';
 
-export class LiveUpdateManager {
-    private unlistenFn?: UnlistenFn;
-    private isActive = false;
-    
-    async start(config: LiveUpdateConfig): Promise<void> {
-        if (this.isActive) {
-            await this.stop();
-        }
-        
-        this.isActive = true;
-        
-        try {
-            console.log("Starting live updates for PVs:", config.pvs);
-            
-            await invoke("start_live_updates", {
-                pvs: config.pvs,
-                updateIntervalMs: config.updateIntervalMs,
-                timezone: config.timezone
-            });
-            
-            this.unlistenFn = await listen<Record<string, PointValue>>(
-                "live-update",
-                (event) => {
-                    if (this.isActive) {
-                        console.log("Received update:", event.payload);
-                        config.onData(event.payload);
-                    }
-                }
-            );
-        } catch (error) {
-            this.isActive = false;
-            throw error;
-        }
-    }
-    
-    async stop(): Promise<void> {
-        console.log("Stopping LiveUpdateManager");
-        this.isActive = false;
-        
-        try {
-            await invoke("stop_live_updates");
-            
-            if (this.unlistenFn) {
-                await this.unlistenFn();
-                this.unlistenFn = undefined;
-            }
-
-            console.log("LiveUpdateManager stopped successfully");
-        } catch (error) {
-            console.error("Error in LiveUpdateManager stop:", error);
-            if (this.unlistenFn) {
-                try {
-                    await this.unlistenFn();
-                } catch (e) {
-                    console.error("Error cleaning up listener:", e);
-                }
-                this.unlistenFn = undefined;
-            }
-            throw error;
-        }
-    }
-
-    isRunning(): boolean {
-        return this.isActive;
-    }
+interface FetchParams {
+    [key: string]: string[] | number;
+    pvs: string[];
+    from: number;
+    to: number;
 }
 
 export async function fetchData(
     pvs: string[],
     start: Date,
-    end: Date,
-    options: ExtendedFetchOptions = {}
-): Promise<NormalizedPVData[]> {
-    const params = {
+    end: Date
+): Promise<PVData[]> {
+    const params: FetchParams = {
         pvs,
-        from: Math.floor(start.getTime() / 1000),
-        to: Math.floor(end.getTime() / 1000),
-        timezone: options.timezone || 'UTC',
-        mode: options.mode || 'fixed',
-        optimization: options.optimization || 'optimized',
-        target_points: options.targetPoints || 1000,
+        from: dateToUnixSeconds(start),
+        to: dateToUnixSeconds(end),
     };
     
     try {
-        return await invoke<NormalizedPVData[]>("fetch_data", params);
+        return await invoke<PVData[]>("fetch_data", params);
     } catch (error) {
         console.error("Error fetching data:", error);
         throw error;
     }
 }
 
-export async function fetchDataAtTime(
-    pvs: string[],
-    timestamp?: Date,
-    timezone?: string
-): Promise<Record<string, PointValue>> {
+export async function fetchLatest(pv: string): Promise<Point> {
     try {
-        const params = {
-            pvs,
-            timestamp: timestamp ? Math.floor(timestamp.getTime() / 1000) : undefined,
-            timezone
-        };
-
-        return await invoke<Record<string, PointValue>>("fetch_data_at_time", params);
+        return await invoke<Point>("fetch_latest", { pv });
     } catch (error) {
-        console.error("Error fetching data at time:", error);
+        console.error("Error fetching latest data:", error);
         throw error;
     }
 }
 
-export async function getPVMetadata(pv: string): Promise<Meta> {
+export async function getPVMetadata(pv: string): Promise<PVMetadata> {
     try {
-        const now = Math.floor(Date.now() / 1000);
-        const data = await invoke<NormalizedPVData[]>("fetch_data", {
-            pvs: [pv],
-            from: now - 60,
-            to: now,
-            timezone: 'UTC',
-            mode: 'fixed',
-            optimization: 'raw',
-            target_points: 1
-        });
-
-        if (!data?.[0]?.meta) {
-            return {
-                name: pv,
-                egu: 'Value',
-                description: 'No metadata available',
-                display_limits: { low: -100, high: 100 }
-            };
-        }
-
-        return data[0].meta;
+        const meta = await invoke<Meta>("get_pv_metadata", { pv });
+        return { name: pv, ...meta };
     } catch (error) {
         console.error("Error fetching PV metadata:", error);
-        return {
-            name: pv,
-            egu: 'Value',
-            description: 'Error fetching metadata',
-            display_limits: { low: -100, high: 100 }
-        };
-    }
-}
-
-export async function exportData(
-    pvs: string[],
-    from: Date,
-    to: Date,
-    format: DataFormat,
-    options: ExtendedFetchOptions = {}
-): Promise<string> {
-    const params = {
-        pvs,
-        from: Math.floor(from.getTime() / 1000),
-        to: Math.floor(to.getTime() / 1000),
-        format,
-        ...options
-    };
-
-    try {
-        return await invoke<string>("export_data", params);
-    } catch (error) {
-        console.error("Error exporting data:", error);
-        throw error;
-    }
-}
-
-export async function validatePVs(pvs: string[]): Promise<boolean[]> {
-    try {
-        return await invoke<boolean[]>("validate_pvs", { pvs });
-    } catch (error) {
-        console.error("Error validating PVs:", error);
-        throw error;
-    }
-}
-
-export async function getPVStatus(pvs: string[]): Promise<DetailedPVStatus[]> {
-    try {
-        return await invoke<DetailedPVStatus[]>("get_pv_status", { pvs });
-    } catch (error) {
-        console.error("Error getting PV status:", error);
         throw error;
     }
 }
@@ -206,10 +55,14 @@ export async function testConnection(): Promise<boolean> {
     }
 }
 
-export function formatTimestamp(timestamp: number): string {
-    return new Date(timestamp * 1000).toISOString();
-}
+// Time utility functions
+const dateToUnixSeconds = (date: Date): number => Math.floor(date.getTime() / 1000);
 
-export function getCurrentTimestamp(): number {
-    return Math.floor(Date.now() / 1000);
-}
+export const formatTimestamp = (timestamp: number): string => 
+    new Date(timestamp * 1000).toISOString();
+
+export const getCurrentTimestamp = (): number => 
+    dateToUnixSeconds(new Date());
+
+export const pointToTimestamp = (point: Point): number => 
+    point.secs * 1000 + point.nanos / 1_000_000;

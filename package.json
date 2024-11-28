@@ -9,7 +9,9 @@
     "serve": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@heroicons/react": "^2.1.5",
@@ -27,17 +29,21 @@
     "solid-js": "^1.7.8",
     "solid-transition-group": "^0.2.3",
     "tailwind-merge": "^2.0.0",
-    "uplot": "^1.6.24"
+    "uplot": "^1.6.24",
+    "vtest": "^1.1.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.5.6",
+    "@vitest/coverage-v8": "^2.1.6",
     "autoprefixer": "^10.4.16",
+    "jsdom": "^25.0.1",
     "postcss": "^8.4.31",
     "prettier": "^3.0.3",
     "prettier-plugin-tailwindcss": "^0.5.7",
     "tailwindcss": "^3.3.5",
     "typescript": "^5.2.2",
     "vite": "^5.3.1",
-    "vite-plugin-solid": "^2.8.0"
+    "vite-plugin-solid": "^2.8.0",
+    "vitest": "^2.1.6"
   }
 }

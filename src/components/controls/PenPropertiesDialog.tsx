@@ -83,7 +83,7 @@ export default function PenPropertiesDialog(props: PenPropertiesDialogProps) {
               <For each={Array.from(props.availableAxes.values())}>
                 {(axis) => (
                   <option value={axis.id}>
-                    {axis.egu} ({axis.position})
+                    {axis.EGU} ({axis.position})
                   </option>
                 )}
               </For>

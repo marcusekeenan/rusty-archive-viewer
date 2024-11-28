@@ -21,7 +21,7 @@ export type PenProperties = {
 
   export interface PVMetadata {
     name: string;
-    egu: string;  // Engineering Units
+    EGU: string;  // Engineering Units
     precision?: number;
     description?: string;
     displayLimits?: {
@@ -32,7 +32,7 @@ export type PenProperties = {
   
   export interface AxisConfig {
     id: string;
-    egu: string;
+    EGU: string;
     position: 'left' | 'right';
     autoRange: boolean;
     range?: {
