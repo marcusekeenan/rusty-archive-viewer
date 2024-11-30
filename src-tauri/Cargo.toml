@@ -38,6 +38,8 @@ prost = "0.12"
 bytes = "1.5"
 protoc = "2.28.0"
 byteorder = "1.4"
+rayon = "1.10.0"
+ordered-float = "3.7.0"
 
 [dev-dependencies]
 pretty_assertions = "1.3"
