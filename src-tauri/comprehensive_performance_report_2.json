@@ -1,0 +1,652 @@
+{
+  "timestamp": "2024-12-02T05:15:32.932488Z",
+  "live_data_results": [
+    {
+      "pv_count": 1,
+      "raw_metrics": {
+        "average_fetch_time": 0.04469117999999999,
+        "average_processing_time": 2.2e-7,
+        "average_total_time": 0.04469139999999999,
+        "average_response_size": 2089,
+        "average_points_count": 58,
+        "average_points_per_second": 1297.7888363309273,
+        "average_bytes_per_point": 36.01724137931034
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.05014545,
+        "average_processing_time": 1.9e-7,
+        "average_total_time": 0.05014564,
+        "average_response_size": 5939,
+        "average_points_count": 58,
+        "average_points_per_second": 1156.6309653242038,
+        "average_bytes_per_point": 102.39655172413794
+      },
+      "comparison": {
+        "speedup": 1.1220422721149932,
+        "size_ratio": 0.3517427176292305
+      }
+    },
+    {
+      "pv_count": 5,
+      "raw_metrics": {
+        "average_fetch_time": 0.05068925999999999,
+        "average_processing_time": 1.8999999999999998e-7,
+        "average_total_time": 0.05068944999999999,
+        "average_response_size": 10420,
+        "average_points_count": 289,
+        "average_points_per_second": 5701.383621246631,
+        "average_bytes_per_point": 36.055363321799305
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.04818475,
+        "average_processing_time": 2e-7,
+        "average_total_time": 0.04818495,
+        "average_response_size": 29633,
+        "average_points_count": 293,
+        "average_points_per_second": 6080.736827577906,
+        "average_bytes_per_point": 101.13651877133105
+      },
+      "comparison": {
+        "speedup": 0.9505912966110306,
+        "size_ratio": 0.35650192195482056
+      }
+    },
+    {
+      "pv_count": 10,
+      "raw_metrics": {
+        "average_fetch_time": 0.07235479,
+        "average_processing_time": 1.9999999999999994e-7,
+        "average_total_time": 0.07235499000000001,
+        "average_response_size": 20923,
+        "average_points_count": 582,
+        "average_points_per_second": 8043.67466570032,
+        "average_bytes_per_point": 35.950171821305844
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.05132489,
+        "average_processing_time": 1.7e-7,
+        "average_total_time": 0.05132506,
+        "average_response_size": 59362,
+        "average_points_count": 588,
+        "average_points_per_second": 11456.391867832206,
+        "average_bytes_per_point": 100.95578231292517
+      },
+      "comparison": {
+        "speedup": 0.7093506612329017,
+        "size_ratio": 0.3560981946519295
+      }
+    },
+    {
+      "pv_count": 20,
+      "raw_metrics": {
+        "average_fetch_time": 0.05642768,
+        "average_processing_time": 2.0999999999999997e-7,
+        "average_total_time": 0.05642789,
+        "average_response_size": 41552,
+        "average_points_count": 1150,
+        "average_points_per_second": 20379.99294320592,
+        "average_bytes_per_point": 36.13217391304348
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.08743569,
+        "average_processing_time": 2e-7,
+        "average_total_time": 0.08743589,
+        "average_response_size": 117756,
+        "average_points_count": 1166,
+        "average_points_per_second": 13335.485005070572,
+        "average_bytes_per_point": 100.99142367066895
+      },
+      "comparison": {
+        "speedup": 1.549515496680808,
+        "size_ratio": 0.3577746763019184
+      }
+    },
+    {
+      "pv_count": 35,
+      "raw_metrics": {
+        "average_fetch_time": 0.08103551,
+        "average_processing_time": 2.0000000000000004e-7,
+        "average_total_time": 0.08103571000000001,
+        "average_response_size": 73194,
+        "average_points_count": 2035,
+        "average_points_per_second": 25112.385638380903,
+        "average_bytes_per_point": 35.96756756756757
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.07400972999999998,
+        "average_processing_time": 2.1000000000000003e-7,
+        "average_total_time": 0.07400993999999998,
+        "average_response_size": 208684,
+        "average_points_count": 2067,
+        "average_points_per_second": 27928.680931237082,
+        "average_bytes_per_point": 100.95984518626028
+      },
+      "comparison": {
+        "speedup": 0.913300321549598,
+        "size_ratio": 0.35625616799640686
+      }
+    }
+  ],
+  "historical_data_results": [
+    {
+      "pv_count": 1,
+      "time_range": "1 minute",
+      "raw_metrics": {
+        "average_fetch_time": 0.04216745,
+        "average_processing_time": 1.7000000000000001e-7,
+        "average_total_time": 0.04216762,
+        "average_response_size": 2074,
+        "average_points_count": 57,
+        "average_points_per_second": 1351.748094865207,
+        "average_bytes_per_point": 36.3859649122807
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.0488819,
+        "average_processing_time": 1.9000000000000003e-7,
+        "average_total_time": 0.048882089999999996,
+        "average_response_size": 5853,
+        "average_points_count": 58,
+        "average_points_per_second": 1186.5286447449364,
+        "average_bytes_per_point": 100.91379310344827
+      },
+      "comparison": {
+        "speedup": 1.1592328426408698,
+        "size_ratio": 0.3605648325495098
+      }
+    },
+    {
+      "pv_count": 1,
+      "time_range": "5 minutes",
+      "raw_metrics": {
+        "average_fetch_time": 0.04323402,
+        "average_processing_time": 1.8e-7,
+        "average_total_time": 0.0432342,
+        "average_response_size": 7308,
+        "average_points_count": 295,
+        "average_points_per_second": 6823.30192301465,
+        "average_bytes_per_point": 24.772881355932203
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.06710328,
+        "average_processing_time": 2e-7,
+        "average_total_time": 0.06710348000000001,
+        "average_response_size": 28809,
+        "average_points_count": 296,
+        "average_points_per_second": 4411.097606264235,
+        "average_bytes_per_point": 97.32770270270271
+      },
+      "comparison": {
+        "speedup": 1.552092556355848,
+        "size_ratio": 0.254530628670066
+      }
+    },
+    {
+      "pv_count": 1,
+      "time_range": "1 hour",
+      "raw_metrics": {
+        "average_fetch_time": 0.09030640000000001,
+        "average_processing_time": 2.1000000000000003e-7,
+        "average_total_time": 0.09030661000000001,
+        "average_response_size": 78550,
+        "average_points_count": 3530,
+        "average_points_per_second": 39089.054499997284,
+        "average_bytes_per_point": 22.25212464589235
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.20774542000000004,
+        "average_processing_time": 2.2e-7,
+        "average_total_time": 0.20774564000000004,
+        "average_response_size": 341049,
+        "average_points_count": 3532,
+        "average_points_per_second": 17001.560177147396,
+        "average_bytes_per_point": 96.55973952434881
+      },
+      "comparison": {
+        "speedup": 2.3004477745316763,
+        "size_ratio": 0.23044930273741246
+      }
+    },
+    {
+      "pv_count": 1,
+      "time_range": "1 day",
+      "raw_metrics": {
+        "average_fetch_time": 0.5701189199999999,
+        "average_processing_time": 2.9e-7,
+        "average_total_time": 0.5701192099999999,
+        "average_response_size": 1858079,
+        "average_points_count": 84314,
+        "average_points_per_second": 147888.36882026834,
+        "average_bytes_per_point": 22.03760941243447
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.9318234999999999,
+        "average_processing_time": 2.6000000000000005e-7,
+        "average_total_time": 0.9318237599999999,
+        "average_response_size": 8137069,
+        "average_points_count": 84316,
+        "average_points_per_second": 90484.92174099533,
+        "average_bytes_per_point": 96.5068195834717
+      },
+      "comparison": {
+        "speedup": 1.634436699650938,
+        "size_ratio": 0.22835287192708148
+      }
+    },
+    {
+      "pv_count": 5,
+      "time_range": "1 minute",
+      "raw_metrics": {
+        "average_fetch_time": 0.048109940000000004,
+        "average_processing_time": 2.2e-7,
+        "average_total_time": 0.048110160000000006,
+        "average_response_size": 10386,
+        "average_points_count": 287,
+        "average_points_per_second": 5965.475899477366,
+        "average_bytes_per_point": 36.18815331010453
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.04948998,
+        "average_processing_time": 1.6e-7,
+        "average_total_time": 0.04949014,
+        "average_response_size": 29296,
+        "average_points_count": 290,
+        "average_points_per_second": 5859.753074046668,
+        "average_bytes_per_point": 101.02068965517242
+      },
+      "comparison": {
+        "speedup": 1.0286837541176332,
+        "size_ratio": 0.35822516589057596
+      }
+    },
+    {
+      "pv_count": 5,
+      "time_range": "5 minutes",
+      "raw_metrics": {
+        "average_fetch_time": 0.04935916,
+        "average_processing_time": 1.7999999999999997e-7,
+        "average_total_time": 0.04935934,
+        "average_response_size": 36384,
+        "average_points_count": 1469,
+        "average_points_per_second": 29761.337975750892,
+        "average_bytes_per_point": 24.76786929884275
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.07497106,
+        "average_processing_time": 2.0000000000000004e-7,
+        "average_total_time": 0.07497126000000001,
+        "average_response_size": 143429,
+        "average_points_count": 1472,
+        "average_points_per_second": 19634.19048846184,
+        "average_bytes_per_point": 97.4381793478261
+      },
+      "comparison": {
+        "speedup": 1.5188870029461499,
+        "size_ratio": 0.25419060028234547
+      }
+    },
+    {
+      "pv_count": 5,
+      "time_range": "1 hour",
+      "raw_metrics": {
+        "average_fetch_time": 0.09853972999999999,
+        "average_processing_time": 2.0000000000000004e-7,
+        "average_total_time": 0.09853993,
+        "average_response_size": 391705,
+        "average_points_count": 17614,
+        "average_points_per_second": 178749.87327472225,
+        "average_bytes_per_point": 22.23827637106847
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.27117618,
+        "average_processing_time": 2.1000000000000003e-7,
+        "average_total_time": 0.27117639,
+        "average_response_size": 1701834,
+        "average_points_count": 17621,
+        "average_points_per_second": 64979.84577492163,
+        "average_bytes_per_point": 96.57987628397935
+      },
+      "comparison": {
+        "speedup": 2.751944211854017,
+        "size_ratio": 0.23025786765019238
+      }
+    },
+    {
+      "pv_count": 5,
+      "time_range": "1 day",
+      "raw_metrics": {
+        "average_fetch_time": 0.74044363,
+        "average_processing_time": 2.4e-7,
+        "average_total_time": 0.74044387,
+        "average_response_size": 9292333,
+        "average_points_count": 421819,
+        "average_points_per_second": 569683.9653760656,
+        "average_bytes_per_point": 22.029194986475243
+      },
+      "json_metrics": {
+        "average_fetch_time": 2.16024127,
+        "average_processing_time": 2.900000000000001e-7,
+        "average_total_time": 2.1602415600000002,
+        "average_response_size": 40709447,
+        "average_points_count": 421824,
+        "average_points_per_second": 195267.0515236268,
+        "average_bytes_per_point": 96.5081337240176
+      },
+      "comparison": {
+        "speedup": 2.917495366664323,
+        "size_ratio": 0.22826257369634456
+      }
+    },
+    {
+      "pv_count": 10,
+      "time_range": "1 minute",
+      "raw_metrics": {
+        "average_fetch_time": 0.05139640999999999,
+        "average_processing_time": 2e-7,
+        "average_total_time": 0.05139660999999999,
+        "average_response_size": 20853,
+        "average_points_count": 579,
+        "average_points_per_second": 11265.334425752984,
+        "average_bytes_per_point": 36.015544041450774
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.0548664,
+        "average_processing_time": 2e-7,
+        "average_total_time": 0.0548666,
+        "average_response_size": 58759,
+        "average_points_count": 582,
+        "average_points_per_second": 10607.546303215435,
+        "average_bytes_per_point": 100.96048109965636
+      },
+      "comparison": {
+        "speedup": 1.067513985844592,
+        "size_ratio": 0.35672912459579553
+      }
+    },
+    {
+      "pv_count": 10,
+      "time_range": "5 minutes",
+      "raw_metrics": {
+        "average_fetch_time": 0.060835110000000005,
+        "average_processing_time": 1.8e-7,
+        "average_total_time": 0.06083529000000001,
+        "average_response_size": 72684,
+        "average_points_count": 2934,
+        "average_points_per_second": 48228.585743570875,
+        "average_bytes_per_point": 24.773006134969325
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.07909097,
+        "average_processing_time": 1.8000000000000002e-7,
+        "average_total_time": 0.07909115,
+        "average_response_size": 286242,
+        "average_points_count": 2939,
+        "average_points_per_second": 37159.656927481774,
+        "average_bytes_per_point": 97.39435182034705
+      },
+      "comparison": {
+        "speedup": 1.3000866766641532,
+        "size_ratio": 0.2543577288821167
+      }
+    },
+    {
+      "pv_count": 10,
+      "time_range": "1 hour",
+      "raw_metrics": {
+        "average_fetch_time": 0.12077226999999999,
+        "average_processing_time": 2.1000000000000003e-7,
+        "average_total_time": 0.12077247999999999,
+        "average_response_size": 784176,
+        "average_points_count": 35256,
+        "average_points_per_second": 291920.8084490772,
+        "average_bytes_per_point": 22.24234172906739
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.51407633,
+        "average_processing_time": 2.1000000000000003e-7,
+        "average_total_time": 0.5140765399999999,
+        "average_response_size": 3406829,
+        "average_points_count": 35274,
+        "average_points_per_second": 68616.24146474377,
+        "average_bytes_per_point": 96.58187333446732
+      },
+      "comparison": {
+        "speedup": 4.256570205397786,
+        "size_ratio": 0.23029519889349395
+      }
+    },
+    {
+      "pv_count": 10,
+      "time_range": "1 day",
+      "raw_metrics": {
+        "average_fetch_time": 2.2548182199999998,
+        "average_processing_time": 2.6000000000000005e-7,
+        "average_total_time": 2.25481848,
+        "average_response_size": 18605033,
+        "average_points_count": 844575,
+        "average_points_per_second": 374564.5192689746,
+        "average_bytes_per_point": 22.02887014178729
+      },
+      "json_metrics": {
+        "average_fetch_time": 5.342639950000001,
+        "average_processing_time": 2.7e-7,
+        "average_total_time": 5.342640220000001,
+        "average_response_size": 81513017,
+        "average_points_count": 844572,
+        "average_points_per_second": 158081.39145106048,
+        "average_bytes_per_point": 96.51399407036936
+      },
+      "comparison": {
+        "speedup": 2.369432514141893,
+        "size_ratio": 0.22824534777543048
+      }
+    },
+    {
+      "pv_count": 20,
+      "time_range": "1 minute",
+      "raw_metrics": {
+        "average_fetch_time": 0.05861715000000001,
+        "average_processing_time": 2.2e-7,
+        "average_total_time": 0.05861737000000001,
+        "average_response_size": 41556,
+        "average_points_count": 1151,
+        "average_points_per_second": 19635.81784716714,
+        "average_bytes_per_point": 36.10425716768028
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.060071679999999995,
+        "average_processing_time": 2.1000000000000003e-7,
+        "average_total_time": 0.060071889999999996,
+        "average_response_size": 117244,
+        "average_points_count": 1161,
+        "average_points_per_second": 19326.84322068109,
+        "average_bytes_per_point": 100.98535745047373
+      },
+      "comparison": {
+        "speedup": 1.0248138051911915,
+        "size_ratio": 0.3575197244351677
+      }
+    },
+    {
+      "pv_count": 20,
+      "time_range": "5 minutes",
+      "raw_metrics": {
+        "average_fetch_time": 0.07155839,
+        "average_processing_time": 2.2e-7,
+        "average_total_time": 0.07155861,
+        "average_response_size": 145103,
+        "average_points_count": 5855,
+        "average_points_per_second": 81821.04152106924,
+        "average_bytes_per_point": 24.78274978650726
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.09473459,
+        "average_processing_time": 2.0999999999999997e-7,
+        "average_total_time": 0.0947348,
+        "average_response_size": 572207,
+        "average_points_count": 5875,
+        "average_points_per_second": 62015.22566153093,
+        "average_bytes_per_point": 97.39693617021277
+      },
+      "comparison": {
+        "speedup": 1.3238770289137813,
+        "size_ratio": 0.2544510203400695
+      }
+    },
+    {
+      "pv_count": 20,
+      "time_range": "1 hour",
+      "raw_metrics": {
+        "average_fetch_time": 0.14893066000000002,
+        "average_processing_time": 2.3e-7,
+        "average_total_time": 0.14893089,
+        "average_response_size": 1570101,
+        "average_points_count": 70587,
+        "average_points_per_second": 473958.0888827025,
+        "average_bytes_per_point": 22.243486761018318
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.43579499000000005,
+        "average_processing_time": 2.0999999999999997e-7,
+        "average_total_time": 0.43579520000000005,
+        "average_response_size": 6822648,
+        "average_points_count": 70637,
+        "average_points_per_second": 162087.60445273374,
+        "average_bytes_per_point": 96.58745416707957
+      },
+      "comparison": {
+        "speedup": 2.9261572263484092,
+        "size_ratio": 0.23029374728669147
+      }
+    },
+    {
+      "pv_count": 20,
+      "time_range": "1 day",
+      "raw_metrics": {
+        "average_fetch_time": 1.6401165899999999,
+        "average_processing_time": 3.1e-7,
+        "average_total_time": 1.6401168999999998,
+        "average_response_size": 37270059,
+        "average_points_count": 1691805,
+        "average_points_per_second": 1031514.8877497697,
+        "average_bytes_per_point": 22.02976052204598
+      },
+      "json_metrics": {
+        "average_fetch_time": 6.2017336599999995,
+        "average_processing_time": 2.5000000000000004e-7,
+        "average_total_time": 6.20173391,
+        "average_response_size": 163290154,
+        "average_points_count": 1691800,
+        "average_points_per_second": 272794.67719052784,
+        "average_bytes_per_point": 96.5185920321551
+      },
+      "comparison": {
+        "speedup": 3.781275535908447,
+        "size_ratio": 0.22824369956315546
+      }
+    },
+    {
+      "pv_count": 35,
+      "time_range": "1 minute",
+      "raw_metrics": {
+        "average_fetch_time": 0.0670713,
+        "average_processing_time": 2.2e-7,
+        "average_total_time": 0.06707152,
+        "average_response_size": 72985,
+        "average_points_count": 2026,
+        "average_points_per_second": 30206.56159275949,
+        "average_bytes_per_point": 36.024185587364265
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.06418104999999999,
+        "average_processing_time": 2.2999999999999997e-7,
+        "average_total_time": 0.06418128,
+        "average_response_size": 206957,
+        "average_points_count": 2049,
+        "average_points_per_second": 31925.196879837862,
+        "average_bytes_per_point": 101.00390434358224
+      },
+      "comparison": {
+        "speedup": 0.956908088559794,
+        "size_ratio": 0.35666131741622353
+      }
+    },
+    {
+      "pv_count": 35,
+      "time_range": "5 minutes",
+      "raw_metrics": {
+        "average_fetch_time": 0.07743417999999999,
+        "average_processing_time": 2.2e-7,
+        "average_total_time": 0.07743439999999999,
+        "average_response_size": 255006,
+        "average_points_count": 10293,
+        "average_points_per_second": 132925.4181604042,
+        "average_bytes_per_point": 24.774701253278927
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.10864895000000001,
+        "average_processing_time": 2.2e-7,
+        "average_total_time": 0.10864917,
+        "average_response_size": 1005741,
+        "average_points_count": 10327,
+        "average_points_per_second": 95049.04639400374,
+        "average_bytes_per_point": 97.38946451050644
+      },
+      "comparison": {
+        "speedup": 1.4031124409823028,
+        "size_ratio": 0.2543878989149408
+      }
+    },
+    {
+      "pv_count": 35,
+      "time_range": "1 hour",
+      "raw_metrics": {
+        "average_fetch_time": 0.22202264,
+        "average_processing_time": 2.2e-7,
+        "average_total_time": 0.22202286,
+        "average_response_size": 2753251,
+        "average_points_count": 123744,
+        "average_points_per_second": 557348.0136234621,
+        "average_bytes_per_point": 22.249571696405482
+      },
+      "json_metrics": {
+        "average_fetch_time": 0.70385689,
+        "average_processing_time": 1.9e-7,
+        "average_total_time": 0.7038570799999999,
+        "average_response_size": 11958975,
+        "average_points_count": 123816,
+        "average_points_per_second": 175910.7118734957,
+        "average_bytes_per_point": 96.58666892808684
+      },
+      "comparison": {
+        "speedup": 3.1702009423714292,
+        "size_ratio": 0.23035861929322046
+      }
+    },
+    {
+      "pv_count": 35,
+      "time_range": "1 day",
+      "raw_metrics": {
+        "average_fetch_time": 2.96385828,
+        "average_processing_time": 3.1000000000000005e-7,
+        "average_total_time": 2.96385859,
+        "average_response_size": 65361144,
+        "average_points_count": 2966108,
+        "average_points_per_second": 1000758.9464651213,
+        "average_bytes_per_point": 22.035995992054232
+      },
+      "json_metrics": {
+        "average_fetch_time": 12.435034469999998,
+        "average_processing_time": 1.54e-6,
+        "average_total_time": 12.435036009999997,
+        "average_response_size": 286271083,
+        "average_points_count": 2966096,
+        "average_points_per_second": 238527.33499241396,
+        "average_bytes_per_point": 96.5144361477174
+      },
+      "comparison": {
+        "speedup": 4.195556445221632,
+        "size_ratio": 0.22831813427711137
+      }
+    }
+  ]
+}
