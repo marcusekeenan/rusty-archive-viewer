@@ -4,28 +4,28 @@ use crate::types::{PVData, Meta, Point, Error};
 use crate::epics::PayloadInfo;
 use chrono::{DateTime, Utc};
 
-pub fn normalize_pv_data(payload_info: PayloadInfo, data_points: Vec<Point>) -> PVData {
-    let mut meta_map = HashMap::new();
-    meta_map.insert("name".to_string(), payload_info.pvname);
-    for header in payload_info.headers {
-        meta_map.insert(header.name, header.val);
-    }
+// pub fn normalize_pv_data(payload_info: PayloadInfo, data_points: Vec<Point>) -> PVData {
+//     let mut meta_map = HashMap::new();
+//     meta_map.insert("name".to_string(), payload_info.pvname);
+//     for header in payload_info.headers {
+//         meta_map.insert(header.name, header.val);
+//     }
 
-    PVData {
-        meta: Meta(meta_map),
-        data: data_points,
-    }
-}
+//     PVData {
+//         meta: Meta(meta_map),
+//         data: data_points,
+//     }
+// }
 
-pub fn create_point(seconds_into_year: u32, nano: u32, val: impl Into<serde_json::Value>, severity: Option<i32>, status: Option<i32>) -> Point {
-    Point {
-        secs: seconds_into_year as i64,
-        nanos: nano as i32,
-        val: val.into(),
-        severity: severity.unwrap_or(0),
-        status: status.unwrap_or(0),
-    }
-}
+// pub fn create_point(seconds_into_year: u32, nano: u32, val: impl Into<serde_json::Value>, severity: Option<i32>, status: Option<i32>) -> Point {
+//     Point {
+//         secs: seconds_into_year as i64,
+//         nanos: nano as i32,
+//         val: val.into(),
+//         severity: severity.unwrap_or(0),
+//         status: status.unwrap_or(0),
+//     }
+// }
 
 pub fn format_date_for_archiver(timestamp_ms: i64) -> Option<String> {
     use chrono::{TimeZone, Utc};

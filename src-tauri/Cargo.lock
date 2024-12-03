@@ -2810,6 +2810,7 @@ dependencies = [
  "prost-build",
  "protoc",
  "rayon",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
