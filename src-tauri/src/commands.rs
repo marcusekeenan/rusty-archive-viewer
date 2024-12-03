@@ -1,9 +1,9 @@
 use chrono::Utc;
-use serde::{Serialize, Deserialize};
+use serde::Deserialize;
 use tauri::State;
 
 use crate::client::ArchiverClient;
-use crate::types::{Config, PVData, Meta, Point, ProcessingMode, UPlotData, BinningOperation, DataFormat};
+use crate::types::{BinningOperation, Config, DataFormat, Meta, Point, ProcessingMode, UPlotData};
 
 pub struct AppState {
     client: ArchiverClient,
@@ -33,8 +33,9 @@ pub async fn fetch_data(
 ) -> Result<UPlotData, String> {
     let mode = options.target_points.map(ProcessingMode::Optimized);
     let format = options.format.unwrap_or_default();
-    
-    state.client
+
+    state
+        .client
         .fetch_data_uplot(options.pvs, options.from, options.to, mode, format)
         .await
         .map(|(data, _size)| data)
@@ -55,8 +56,9 @@ pub async fn fetch_live_data(
     let end = Utc::now().timestamp();
     let start = end - 300; // Last 5 minutes
     let format = options.format.unwrap_or_default();
-    
-    state.client
+
+    state
+        .client
         .fetch_data_uplot(options.pvs, start, end, Some(ProcessingMode::Raw), format)
         .await
         .map(|(data, _size)| data)
@@ -78,12 +80,14 @@ pub async fn fetch_latest(
     let start = end - 5; // Last 5 seconds
     let format = options.format.unwrap_or_default();
 
-    let (data, _size) = state.client
+    let (data, _size) = state
+        .client
         .fetch_data_with_processing(&options.pv, start, end, ProcessingMode::Raw, format)
         .await
         .map_err(|e| e.to_string())?;
 
-    data.data.last()
+    data.data
+        .last()
         .cloned()
         .ok_or_else(|| "No data available".to_string())
 }
@@ -98,7 +102,8 @@ pub async fn get_pv_metadata(
     state: State<'_, AppState>,
     options: MetadataOptions,
 ) -> Result<Meta, String> {
-    state.client
+    state
+        .client
         .get_metadata(&options.pv)
         .await
         .map_err(|e| e.to_string())
@@ -112,15 +117,16 @@ pub async fn test_connection(
     let now = Utc::now().timestamp();
     let format = format.unwrap_or_default();
 
-    match state.client
+    match state
+        .client
         .fetch_data_with_processing(
             "ROOM:LI30:1:OUTSIDE_TEMP",
             now - 60,
             now,
             ProcessingMode::Raw,
-            format
+            format,
         )
-        .await 
+        .await
     {
         Ok(_) => Ok(true),
         Err(_) => Ok(false),
@@ -171,7 +177,8 @@ pub async fn fetch_binned_data(
 
     let format = options.format.unwrap_or_default();
 
-    state.client
+    state
+        .client
         .fetch_data_uplot(options.pvs, options.from, options.to, Some(mode), format)
         .await
         .map(|(data, _size)| data)
@@ -194,8 +201,9 @@ pub async fn fetch_chart_data(
 ) -> Result<UPlotData, String> {
     let mode = options.target_points.map(ProcessingMode::Optimized);
     let format = options.format.unwrap_or_default();
-    
-    state.client
+
+    state
+        .client
         .fetch_data_uplot(options.pvs, options.from, options.to, mode, format)
         .await
         .map(|(data, _size)| data)
@@ -219,8 +227,9 @@ pub async fn fetch_live_chart_data(
     let format = options.format.unwrap_or_default();
 
     let mode = options.target_points.map(ProcessingMode::Optimized);
-    
-    state.client
+
+    state
+        .client
         .fetch_data_uplot(options.pvs, start, end, mode, format)
         .await
         .map(|(data, _size)| data)

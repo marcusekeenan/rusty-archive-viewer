@@ -1,13 +1,12 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
-use serde_json::Value; 
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum DataFormat {
-    Raw,   // Protocol Buffer format
-    Json,  // JSON format
+    Raw,  // Protocol Buffer format
+    Json, // JSON format
 }
 
 impl Default for DataFormat {
@@ -35,14 +34,28 @@ pub enum ProcessingMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BinningOperation {
-    Mean, Max, Min, Jitter, StdDev, Count,
-    FirstSample, LastSample, FirstFill, LastFill,
-    Median, Variance, PopVariance,
-    Kurtosis, Skewness, Linear, Loess,
+    Mean,
+    Max,
+    Min,
+    Jitter,
+    StdDev,
+    Count,
+    FirstSample,
+    LastSample,
+    FirstFill,
+    LastFill,
+    Median,
+    Variance,
+    PopVariance,
+    Kurtosis,
+    Skewness,
+    Linear,
+    Loess,
     CAPlotBinning,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Meta {
     pub(crate) name: String,
     pub(crate) DRVH: Option<String>,
@@ -58,8 +71,6 @@ pub struct Meta {
     pub(crate) NELM: Option<String>,
     pub(crate) DESC: Option<String>,
 }
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullMeta {
@@ -109,7 +120,6 @@ pub struct FullMeta {
     pub extraFields: Option<HashMap<String, Value>>, // Adjusted to handle nested object
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PointValue {
     Float(f32),
@@ -153,7 +163,10 @@ impl PointJson {
                     .filter_map(|v| v.as_u64().map(|u| u as u8))
                     .collect(),
             )),
-            _ => Err(Error::Decode(format!("Unexpected value type: {:?}", self.val))),
+            _ => Err(Error::Decode(format!(
+                "Unexpected value type: {:?}",
+                self.val
+            ))),
         }
     }
 
@@ -165,11 +178,9 @@ impl PointJson {
             val,
             severity: self.severity.unwrap_or(0) as i32,
             status: self.status.unwrap_or(0) as i32,
-
         })
     }
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PVDataJson {
@@ -266,9 +277,12 @@ impl fmt::Display for ProcessingMode {
         match self {
             ProcessingMode::Raw => write!(f, ""),
             ProcessingMode::Optimized(points) => write!(f, "optimized({})", points),
-            ProcessingMode::Binning { bin_size, operation } => match operation {
+            ProcessingMode::Binning {
+                bin_size,
+                operation,
+            } => match operation {
                 BinningOperation::CAPlotBinning => write!(f, "caplot"),
-                _ => write!(f, "{}_{}", operation.to_string().to_lowercase(), bin_size)
+                _ => write!(f, "{}_{}", operation.to_string().to_lowercase(), bin_size),
             },
         }
     }

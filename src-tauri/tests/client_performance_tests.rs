@@ -1,39 +1,59 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
-use std::{time::Instant, error::Error};
-use tokio::time::{sleep, Duration};
 use rusty_archive_viewer::{
-    Config,
     client::ArchiverClient,
     constants::{DEFAULT_BASE_URL, DEFAULT_TIMEOUT},
-    types::{PVData, ProcessingMode, DataFormat},
+    types::{DataFormat, PVData, ProcessingMode},
+    Config,
 };
+use serde::Serialize;
+use std::{error::Error, time::Instant};
+use tokio::time::{sleep, Duration};
 
 const TEST_PVS: [&str; 35] = [
-    "CTE:CM01:2502:B1:TEMP", "CTE:CM02:2502:B1:TEMP", "CTE:CM03:2502:B1:TEMP",
-    "CTE:CMH1:2502:B1:TEMP", "CTE:CMH2:2502:B1:TEMP", "CTE:CM04:2502:B1:TEMP",
-    "CTE:CM05:2502:B1:TEMP", "CTE:CM06:2502:B1:TEMP", "CTE:CM07:2502:B1:TEMP",
-    "CTE:CM08:2502:B1:TEMP", "CTE:CM09:2502:B1:TEMP", "CTE:CM10:2502:B1:TEMP",
-    "CTE:CM11:2502:B1:TEMP", "CTE:CM12:2502:B1:TEMP", "CTE:CM13:2502:B1:TEMP",
-    "CTE:CM14:2502:B1:TEMP", "CTE:CM15:2502:B1:TEMP", "CTE:CM16:2502:B1:TEMP",
-    "CTE:CM17:2502:B1:TEMP", "CTE:CM18:2502:B1:TEMP", "CTE:CM19:2502:B1:TEMP",
-    "CTE:CM20:2502:B1:TEMP", "CTE:CM21:2502:B1:TEMP", "CTE:CM22:2502:B1:TEMP",
-    "CTE:CM23:2502:B1:TEMP", "CTE:CM24:2502:B1:TEMP", "CTE:CM25:2502:B1:TEMP",
-    "CTE:CM26:2502:B1:TEMP", "CTE:CM27:2502:B1:TEMP", "CTE:CM28:2502:B1:TEMP",
-    "CTE:CM29:2502:B1:TEMP", "CTE:CM30:2502:B1:TEMP", "CTE:CM31:2502:B1:TEMP",
-    "CTE:CM32:2502:B1:TEMP", "CTE:CM33:2502:B1:TEMP",
+    "CTE:CM01:2502:B1:TEMP",
+    "CTE:CM02:2502:B1:TEMP",
+    "CTE:CM03:2502:B1:TEMP",
+    "CTE:CMH1:2502:B1:TEMP",
+    "CTE:CMH2:2502:B1:TEMP",
+    "CTE:CM04:2502:B1:TEMP",
+    "CTE:CM05:2502:B1:TEMP",
+    "CTE:CM06:2502:B1:TEMP",
+    "CTE:CM07:2502:B1:TEMP",
+    "CTE:CM08:2502:B1:TEMP",
+    "CTE:CM09:2502:B1:TEMP",
+    "CTE:CM10:2502:B1:TEMP",
+    "CTE:CM11:2502:B1:TEMP",
+    "CTE:CM12:2502:B1:TEMP",
+    "CTE:CM13:2502:B1:TEMP",
+    "CTE:CM14:2502:B1:TEMP",
+    "CTE:CM15:2502:B1:TEMP",
+    "CTE:CM16:2502:B1:TEMP",
+    "CTE:CM17:2502:B1:TEMP",
+    "CTE:CM18:2502:B1:TEMP",
+    "CTE:CM19:2502:B1:TEMP",
+    "CTE:CM20:2502:B1:TEMP",
+    "CTE:CM21:2502:B1:TEMP",
+    "CTE:CM22:2502:B1:TEMP",
+    "CTE:CM23:2502:B1:TEMP",
+    "CTE:CM24:2502:B1:TEMP",
+    "CTE:CM25:2502:B1:TEMP",
+    "CTE:CM26:2502:B1:TEMP",
+    "CTE:CM27:2502:B1:TEMP",
+    "CTE:CM28:2502:B1:TEMP",
+    "CTE:CM29:2502:B1:TEMP",
+    "CTE:CM30:2502:B1:TEMP",
+    "CTE:CM31:2502:B1:TEMP",
+    "CTE:CM32:2502:B1:TEMP",
+    "CTE:CM33:2502:B1:TEMP",
 ];
 
 const PV_GROUPS: [usize; 5] = [1, 5, 10, 20, 35];
 const ITERATIONS: usize = 10;
 const LIVE_DATA_DURATION: i64 = 60; // 1 minute of live data
-const HISTORICAL_TIME_RANGES: [(i64, &str); 3] = [
-    (60, "1 minute"),
-    (300, "5 minutes"),
-    (3600, "1 hour"),
-];
+const HISTORICAL_TIME_RANGES: [(i64, &str); 3] =
+    [(60, "1 minute"), (300, "5 minutes"), (3600, "1 hour")];
 
-#[derive(Debug, Serialize)]  
+#[derive(Debug, Serialize)]
 struct PerformanceReport {
     timestamp: DateTime<Utc>,
     live_data_results: Vec<LiveDataResult>,
@@ -117,7 +137,10 @@ async fn run_performance_test(
         total_fetch_time += fetch_time;
         total_processing_time += processing_time;
         total_response_size += size;
-        total_points_count += _processed_result.iter().map(|pv| pv.data.len()).sum::<usize>();
+        total_points_count += _processed_result
+            .iter()
+            .map(|pv| pv.data.len())
+            .sum::<usize>();
     }
 
     let average_fetch_time = total_fetch_time / iterations as f64;
@@ -148,15 +171,21 @@ async fn comprehensive_performance_analysis() -> Result<(), Box<dyn Error>> {
 
     // Live data performance test
     for &pv_count in &PV_GROUPS {
-        let pvs: Vec<String> = TEST_PVS.iter().take(pv_count).map(|&s| s.to_string()).collect();
+        let pvs: Vec<String> = TEST_PVS
+            .iter()
+            .take(pv_count)
+            .map(|&s| s.to_string())
+            .collect();
 
         println!("Testing live data for {} PVs", pv_count);
 
         let end = Utc::now().timestamp();
         let start = end - LIVE_DATA_DURATION;
 
-        let raw_metrics = run_performance_test(&client, &pvs, start, end, DataFormat::Raw, ITERATIONS).await?;
-        let json_metrics = run_performance_test(&client, &pvs, start, end, DataFormat::Json, ITERATIONS).await?;
+        let raw_metrics =
+            run_performance_test(&client, &pvs, start, end, DataFormat::Raw, ITERATIONS).await?;
+        let json_metrics =
+            run_performance_test(&client, &pvs, start, end, DataFormat::Json, ITERATIONS).await?;
 
         let speedup = json_metrics.average_total_time / raw_metrics.average_total_time;
         let size_ratio = raw_metrics.average_bytes_per_point / json_metrics.average_bytes_per_point;
@@ -165,10 +194,16 @@ async fn comprehensive_performance_analysis() -> Result<(), Box<dyn Error>> {
             pv_count,
             raw_metrics,
             json_metrics,
-            comparison: ComparisonMetrics { speedup, size_ratio },
+            comparison: ComparisonMetrics {
+                speedup,
+                size_ratio,
+            },
         });
 
-        println!("Live data: Raw format is {:.2}x faster with {:.2}x size efficiency", speedup, size_ratio);
+        println!(
+            "Live data: Raw format is {:.2}x faster with {:.2}x size efficiency",
+            speedup, size_ratio
+        );
 
         // Allow some time between tests to avoid overwhelming the server
         sleep(Duration::from_secs(1)).await;
@@ -176,29 +211,47 @@ async fn comprehensive_performance_analysis() -> Result<(), Box<dyn Error>> {
 
     // Historical data performance test
     for &pv_count in &PV_GROUPS {
-        let pvs: Vec<String> = TEST_PVS.iter().take(pv_count).map(|&s| s.to_string()).collect();
+        let pvs: Vec<String> = TEST_PVS
+            .iter()
+            .take(pv_count)
+            .map(|&s| s.to_string())
+            .collect();
 
         for &(duration, range_name) in HISTORICAL_TIME_RANGES.iter() {
-            println!("Testing {} PVs for {} historical range", pv_count, range_name);
+            println!(
+                "Testing {} PVs for {} historical range",
+                pv_count, range_name
+            );
 
             let end = Utc::now().timestamp();
             let start = end - duration;
 
-            let raw_metrics = run_performance_test(&client, &pvs, start, end, DataFormat::Raw, ITERATIONS).await?;
-            let json_metrics = run_performance_test(&client, &pvs, start, end, DataFormat::Json, ITERATIONS).await?;
+            let raw_metrics =
+                run_performance_test(&client, &pvs, start, end, DataFormat::Raw, ITERATIONS)
+                    .await?;
+            let json_metrics =
+                run_performance_test(&client, &pvs, start, end, DataFormat::Json, ITERATIONS)
+                    .await?;
 
             let speedup = json_metrics.average_total_time / raw_metrics.average_total_time;
-            let size_ratio = raw_metrics.average_bytes_per_point / json_metrics.average_bytes_per_point;
+            let size_ratio =
+                raw_metrics.average_bytes_per_point / json_metrics.average_bytes_per_point;
 
             report.historical_data_results.push(HistoricalDataResult {
                 pv_count,
                 time_range: range_name.to_string(),
                 raw_metrics,
                 json_metrics,
-                comparison: ComparisonMetrics { speedup, size_ratio },
+                comparison: ComparisonMetrics {
+                    speedup,
+                    size_ratio,
+                },
             });
 
-            println!("Historical data ({}): Raw format is {:.2}x faster with {:.2}x size efficiency", range_name, speedup, size_ratio);
+            println!(
+                "Historical data ({}): Raw format is {:.2}x faster with {:.2}x size efficiency",
+                range_name, speedup, size_ratio
+            );
 
             // Allow some time between tests to avoid overwhelming the server
             sleep(Duration::from_secs(1)).await;

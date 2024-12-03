@@ -2,19 +2,13 @@
 pub mod client;
 pub mod commands;
 pub mod constants;
-pub mod types;
 pub mod decode;
 pub mod decode_helpers;
+pub mod types;
 
 pub use client::ArchiverClient;
-pub use commands::{fetch_data, fetch_latest, test_connection, get_pv_metadata, AppState};
-pub use types::{
-    Config,
-    Point,
-    PVData,
-    Error,
-    Meta,
-};
+pub use commands::{fetch_data, fetch_latest, get_pv_metadata, test_connection, AppState};
+pub use types::{Config, Error, Meta, PVData, Point};
 
 // Generated protobuf code
 pub mod epics {

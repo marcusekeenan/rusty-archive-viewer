@@ -177,53 +177,24 @@ impl ArchiverClient {
         match format {
             DataFormat::Raw => {
                 let bytes = response.bytes().await.map_err(Error::Network)?;
-                
                 let duration_seconds = end - start;
                 let content_size = bytes.len();
-                
-                // println!("\nProcessing request:");
-                // println!("Duration: {}s, Size: {} bytes", duration_seconds, content_size);
             
-                let mut decoder_context = match duration_seconds {
-                    d if d <= 5 => {
-                        // Live data: ~6 points per 5 seconds
-                        let estimated_points = d;
-                        let batch_size = 10;  // Small batch since we only get ~6 points
-                        let ctx = DecoderContext::new(estimated_points.try_into().unwrap());
-                        // println!("Live data: using batch size: {}", batch_size);
-                        ctx
-                    },
-                    d if d <= 60 => {
-                        // 1 minute: ~58-59 points
-                        let estimated_points = d;
-                        let batch_size = 30;  // Half of expected points
-                        let ctx = DecoderContext::new(estimated_points.try_into().unwrap());
-                        // println!("1-min data: using batch size: {}", batch_size);
-                        ctx
-                    },
-                    d if d <= 300 => {
-                        // 5 minutes: ~295-296 points
-                        let estimated_points = d;
-                        let batch_size = 100;  // ~1/3 of expected points
-                        let ctx = DecoderContext::new(estimated_points.try_into().unwrap());
-                        // println!("5-min data: using batch size: {}", batch_size);
-                        ctx
-                    },
-                    d => {
-                        // 1 hour+: ~3500+ points
-                        let estimated_points = d;
-                        let batch_size = 500;  // Larger batch for better parallel processing
-                        let ctx = DecoderContext::new(estimated_points.try_into().unwrap());
-                        // println!("Long-term data: using batch size: {}", batch_size);
-                        ctx
-                    }
+                // Calculate batch size based on duration
+                let batch_size = match duration_seconds {
+                    d if d <= 5 => 10,   // Small batch for live data
+                    d if d <= 60 => 30,  // Moderate batch for 1-minute data
+                    d if d <= 300 => 100, // Larger batch for 5-minute data
+                    _ => 500,            // Largest batch for long-term data
                 };
             
-                let pv_data = decoder_context.decode_response(&bytes)?;
-                if let Some(first_pv) = &pv_data.first() {
-                    // println!("Actual points decoded: {}", first_pv.data.len());
-                }
+                // Initialize the DecoderContext
+                let mut decoder_context = DecoderContext::new(batch_size);
             
+                // Decode the response
+                let pv_data = decoder_context.decode_response(&bytes)?;
+            
+                // Return the first PV data and content size
                 Ok((
                     pv_data
                         .into_iter()
@@ -231,7 +202,7 @@ impl ArchiverClient {
                         .ok_or_else(|| Error::Invalid("No data returned".to_string()))?,
                     content_size,
                 ))
-            }
+            }            
             DataFormat::Json => {
                 // Read the response body as text
                 let text = response.text().await.map_err(Error::Network)?;
@@ -317,18 +288,6 @@ impl ArchiverClient {
             }
         }
     }
-
-    fn preprocess_json(&self, json: &str) -> String {
-        let remove_spaces = Regex::new(r"\s*:\s*").unwrap();
-        let remove_trailing_commas = Regex::new(r",\s*([}\]])").unwrap();
-
-        let json = json.trim(); // This will remove leading and trailing whitespace
-        let json = remove_spaces.replace_all(json, ":").to_string();
-        let json = remove_trailing_commas.replace_all(&json, "$1").to_string();
-
-        json.replace("\n", "\\n")
-    }
-
     fn build_url(&self, path: &str, params: &[(&str, &str)]) -> Result<Url, Error> {
         let mut url = Url::parse(&format!("{}/{}", self.base_url, path))
             .map_err(|e| Error::Invalid(format!("Invalid URL: {}", e)))?;

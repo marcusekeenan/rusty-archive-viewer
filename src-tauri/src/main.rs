@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use rusty_archive_viewer::{AppState, Config, commands};
+use rusty_archive_viewer::{commands, AppState, Config};
 use tauri::Manager;
 
 fn main() {
@@ -13,7 +13,7 @@ fn main() {
             commands::fetch_data,
             commands::fetch_latest,
             commands::test_connection,
-            commands::get_pv_metadata,  // Add this line
+            commands::get_pv_metadata, // Add this line
         ])
         .manage(state)
         .setup(|app| {

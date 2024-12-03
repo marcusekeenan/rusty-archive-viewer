@@ -1,15 +1,13 @@
 use chrono::Utc;
 use rusty_archive_viewer::{
-    Config,
     client::ArchiverClient,
     constants::{DEFAULT_BASE_URL, DEFAULT_TIMEOUT},
-    types::{PVData, ProcessingMode, DataFormat},
+    types::{DataFormat, PVData, ProcessingMode},
+    Config,
 };
 
 // Known good PVs for testing
-const TEST_PVS: [&str; 1] = [
-    "ROOM:LI30:1:OUTSIDE_TEMP"
-];
+const TEST_PVS: [&str; 1] = ["ROOM:LI30:1:OUTSIDE_TEMP"];
 
 const INVALID_PV: &str = "INVALID:PV:NAME:123";
 
@@ -45,10 +43,7 @@ mod tests {
                     println!("  Data size: {} bytes", size);
                     if let Some(first) = data.data.first() {
                         println!("  First value: {}", first.val);
-                        println!(
-                            "  Timestamp: secs={}, nanos={}",
-                            first.secs, first.nanos
-                        );
+                        println!("  Timestamp: secs={}, nanos={}", first.secs, first.nanos);
                     }
                 }
                 Err(e) => println!("  Error with format {:?}: {}", format, e),
@@ -70,7 +65,9 @@ mod tests {
             let client = client.clone();
             let pv = pv.clone();
             async move {
-                client.fetch_data(&pv, one_hour_ago, now, DataFormat::Raw).await
+                client
+                    .fetch_data(&pv, one_hour_ago, now, DataFormat::Raw)
+                    .await
             }
         });
 
