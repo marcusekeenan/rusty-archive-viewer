@@ -8,11 +8,8 @@ use crate::Point;
 use futures::future::join_all;
 use regex::Regex;
 use reqwest::{Client, Response};
-use std::collections::{BTreeSet, HashMap};
 use tokio::task;
 use url::Url;
-
-const ESTIMATED_POINTS_CAPACITY: usize = 100;
 
 #[derive(Clone)]
 pub struct ArchiverClient {
@@ -180,15 +177,59 @@ impl ArchiverClient {
         match format {
             DataFormat::Raw => {
                 let bytes = response.bytes().await.map_err(Error::Network)?;
-                //  println!("Raw response size: {} bytes", bytes.len());
-                let mut decoder_context = DecoderContext::new(ESTIMATED_POINTS_CAPACITY);
+                
+                let duration_seconds = end - start;
+                let content_size = bytes.len();
+                
+                // println!("\nProcessing request:");
+                // println!("Duration: {}s, Size: {} bytes", duration_seconds, content_size);
+            
+                let mut decoder_context = match duration_seconds {
+                    d if d <= 5 => {
+                        // Live data: ~6 points per 5 seconds
+                        let estimated_points = d;
+                        let batch_size = 10;  // Small batch since we only get ~6 points
+                        let ctx = DecoderContext::new(estimated_points.try_into().unwrap());
+                        // println!("Live data: using batch size: {}", batch_size);
+                        ctx
+                    },
+                    d if d <= 60 => {
+                        // 1 minute: ~58-59 points
+                        let estimated_points = d;
+                        let batch_size = 30;  // Half of expected points
+                        let ctx = DecoderContext::new(estimated_points.try_into().unwrap());
+                        // println!("1-min data: using batch size: {}", batch_size);
+                        ctx
+                    },
+                    d if d <= 300 => {
+                        // 5 minutes: ~295-296 points
+                        let estimated_points = d;
+                        let batch_size = 100;  // ~1/3 of expected points
+                        let ctx = DecoderContext::new(estimated_points.try_into().unwrap());
+                        // println!("5-min data: using batch size: {}", batch_size);
+                        ctx
+                    },
+                    d => {
+                        // 1 hour+: ~3500+ points
+                        let estimated_points = d;
+                        let batch_size = 500;  // Larger batch for better parallel processing
+                        let ctx = DecoderContext::new(estimated_points.try_into().unwrap());
+                        // println!("Long-term data: using batch size: {}", batch_size);
+                        ctx
+                    }
+                };
+            
                 let pv_data = decoder_context.decode_response(&bytes)?;
+                if let Some(first_pv) = &pv_data.first() {
+                    // println!("Actual points decoded: {}", first_pv.data.len());
+                }
+            
                 Ok((
                     pv_data
                         .into_iter()
                         .next()
                         .ok_or_else(|| Error::Invalid("No data returned".to_string()))?,
-                    content_length,
+                    content_size,
                 ))
             }
             DataFormat::Json => {
