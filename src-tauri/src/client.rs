@@ -149,7 +149,7 @@ impl ArchiverClient {
             ],
         )?;
 
-        println!("Requesting URL: {}", url);
+        //  println!("Requesting URL: {}", url);
 
         let response = self
             .client
@@ -180,8 +180,8 @@ impl ArchiverClient {
         match format {
             DataFormat::Raw => {
                 let bytes = response.bytes().await.map_err(Error::Network)?;
-                println!("Raw response size: {} bytes", bytes.len());
-                let decoder_context = DecoderContext::new(ESTIMATED_POINTS_CAPACITY);
+                //  println!("Raw response size: {} bytes", bytes.len());
+                let mut decoder_context = DecoderContext::new(ESTIMATED_POINTS_CAPACITY);
                 let pv_data = decoder_context.decode_response(&bytes)?;
                 Ok((
                     pv_data
@@ -194,18 +194,18 @@ impl ArchiverClient {
             DataFormat::Json => {
                 // Read the response body as text
                 let text = response.text().await.map_err(Error::Network)?;
-                println!("Raw JSON response:\n{}", text);
-            
+                //  println!("Raw JSON response:\n{}", text);
+
                 // Attempt to parse the JSON response
                 let pv_data_json: Vec<PVDataJson> = match serde_json::from_str(&text) {
                     Ok(data) => data,
                     Err(e) => {
                         println!("[ERROR] JSON parsing error: {}", e);
-            
+
                         // Extract error line and column if available
                         let line = e.line();
                         let column = e.column();
-            
+
                         if line > 0 {
                             println!("[ERROR] Error occurred at line {}, column {}", line, column);
                             let lines: Vec<&str> = text.lines().collect();
@@ -214,9 +214,11 @@ impl ArchiverClient {
                                 println!("[ERROR] {}^", " ".repeat(column.saturating_sub(1)));
                             }
                         } else {
-                            println!("[ERROR] Could not determine the line or column of the error.");
+                            println!(
+                                "[ERROR] Could not determine the line or column of the error."
+                            );
                         }
-            
+
                         return Err(Error::Invalid(format!(
                             "Failed to parse JSON: {}. JSON snippet:\n{}",
                             e,
@@ -224,16 +226,19 @@ impl ArchiverClient {
                         )));
                     }
                 };
-            
-                println!("[DEBUG] Successfully parsed JSON data for {} PVs", pv_data_json.len());
-            
+
+                // println!(
+                //     "[DEBUG] Successfully parsed JSON data for {} PVs",
+                //     pv_data_json.len()
+                // );
+
                 // Ensure we have at least one PVDataJson in the parsed JSON
                 if pv_data_json.is_empty() {
                     return Err(Error::Invalid(
                         "No data returned in the JSON response".to_string(),
                     ));
                 }
-            
+
                 // Convert PVDataJson into PVData
                 let pv_data: Vec<PVData> = pv_data_json
                     .into_iter()
@@ -252,22 +257,23 @@ impl ArchiverClient {
                             .collect(),
                     })
                     .collect();
-            
+
                 // Debugging output for the parsed data
-                println!("[DEBUG] Successfully converted JSON data to {} PV(s)", pv_data.len());
+                // println!(
+                //     "[DEBUG] Successfully converted JSON data to {} PV(s)",
+                //     pv_data.len()
+                // );
                 if let Some(first_pv) = pv_data.first() {
-                    println!("[DEBUG] First PV name: {}", first_pv.meta.name);
-                    println!("[DEBUG] Number of data points: {}", first_pv.data.len());
-                    if let Some(first_point) = first_pv.data.first() {
-                        println!("[DEBUG] First data point: {:?}", first_point);
-                    }
+                    // println!("[DEBUG] First PV name: {}", first_pv.meta.name);
+                    // println!("[DEBUG] Number of data points: {}", first_pv.data.len());
+                    // if let Some(first_point) = first_pv.data.first() {
+                    //     println!("[DEBUG] First data point: {:?}", first_point);
+                    // }
                 }
-            
+
                 // Return the first PVData and the content length (if available)
                 Ok((pv_data.into_iter().next().unwrap(), content_length))
             }
-            
-            
         }
     }
 
@@ -292,12 +298,12 @@ impl ArchiverClient {
     pub async fn get_metadata(&self, pv: &str) -> Result<Meta, Error> {
         // Build the URL
         let url = self.build_url("bpl/getMetadata", &[("pv", pv)])?;
-        println!("[DEBUG] Built URL: {}", url);
+        //  println!("[DEBUG] Built URL: {}", url);
 
         // Send the request
         let response = match self.client.get(url.clone()).send().await {
             Ok(resp) => {
-                println!("[DEBUG] Received response with status: {}", resp.status());
+                //  println!("[DEBUG] Received response with status: {}", resp.status());
                 resp
             }
             Err(err) => {
@@ -308,12 +314,12 @@ impl ArchiverClient {
 
         // Get the response status
         let status = response.status();
-        println!("[DEBUG] Response status: {}", status);
+        //  println!("[DEBUG] Response status: {}", status);
 
         // Read the response body
         let bytes = match response.bytes().await {
             Ok(b) => {
-                println!("[DEBUG] Successfully read response bytes");
+                //  println!("[DEBUG] Successfully read response bytes");
                 b
             }
             Err(err) => {
@@ -338,7 +344,7 @@ impl ArchiverClient {
         // Parse the metadata
         let meta_data: Meta = match serde_json::from_slice(&bytes) {
             Ok(data) => {
-                println!("[DEBUG] Successfully parsed metadata JSON");
+                //  println!("[DEBUG] Successfully parsed metadata JSON");
                 data
             }
             Err(err) => {
@@ -355,7 +361,7 @@ impl ArchiverClient {
         };
 
         // Return the parsed metadata
-        println!("[DEBUG] Metadata fetched successfully for PV: {}", pv);
+        //  println!("[DEBUG] Metadata fetched successfully for PV: {}", pv);
         Ok(meta_data)
     }
 

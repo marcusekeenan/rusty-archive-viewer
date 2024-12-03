@@ -1,55 +1,136 @@
 use crate::constants::*;
 use crate::epics::*;
 use crate::types::*;
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use chrono::NaiveDate;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use prost::Message;
 use std::collections::HashMap;
 
-// Cache for year start timestamps
 static YEAR_STARTS: Lazy<DashMap<i32, i64>> = Lazy::new(DashMap::new);
 
 pub struct DecoderContext {
     points_capacity: usize,
+    decode_buffer: Vec<u8>,
+    current_point: Vec<u8>,
 }
 
 impl DecoderContext {
     pub fn new(points_capacity: usize) -> Self {
-        Self { points_capacity }
+        Self { 
+            points_capacity,
+            decode_buffer: Vec::with_capacity(1024),
+            current_point: Vec::with_capacity(128),
+        }
     }
 
-    pub fn decode_response(&self, raw_bytes: &[u8]) -> Result<Vec<PVData>, Error> {
+    pub fn decode_response(&mut self, raw_bytes: &[u8]) -> Result<Vec<PVData>, Error> {
         if raw_bytes.is_empty() {
             return Err(Error::Decode("Empty response".to_string()));
         }
-    
-        // Split the response into lines
-        let mut iter = raw_bytes.split(|&b| b == NEWLINE_CHAR);
-    
-        // Parse header
-        let header = iter
-            .next()
-            .ok_or_else(|| Error::Decode("Missing header".to_string()))?;
-        let mut header_buffer = Vec::with_capacity(header.len());
-        self.unescape_new_lines(header, &mut header_buffer);
-        let payload_info =
-            PayloadInfo::decode(&header_buffer[..]).map_err(|e| Error::Decode(e.to_string()))?;
-    
-        let year = payload_info.year;
-        let type_id = payload_info.r#type;
-    
-        // Prepare metadata
-        let mut meta_map = HashMap::new();
-        meta_map.insert("name".to_string(), Some(payload_info.pvname)); // Example: mandatory field
-        for header in payload_info.headers {
-            meta_map.insert(header.name, Some(header.val));
+
+        // Streaming decode approach
+        let mut points = Vec::with_capacity(self.points_capacity);
+        self.decode_buffer.clear();
+        self.current_point.clear();
+
+        // State tracking
+        let mut in_header = true;
+        let mut in_escape = false;
+        let mut payload_info = None;
+        let mut meta = None;
+
+        for &byte in raw_bytes {
+            match (in_header, in_escape, byte) {
+                // Handle escape sequences
+                (_, false, ESCAPE_CHAR) => {
+                    in_escape = true;
+                    continue;
+                },
+                (_, true, ESCAPE_ESCAPE_CHAR) => {
+                    self.current_point.push(ESCAPE_CHAR);
+                    in_escape = false;
+                },
+                (_, true, NEWLINE_ESCAPE_CHAR) => {
+                    self.current_point.push(NEWLINE_CHAR);
+                    in_escape = false;
+                },
+                (_, true, CARRIAGERETURN_ESCAPE_CHAR) => {
+                    self.current_point.push(CARRIAGERETURN_CHAR);
+                    in_escape = false;
+                },
+                (_, true, b) => {
+                    self.current_point.push(b);
+                    in_escape = false;
+                },
+
+                // Handle header completion
+                (true, false, NEWLINE_CHAR) => {
+                    // Process header
+                    let mut header_slice = self.current_point.as_slice();
+                    let info = PayloadInfo::decode(&mut header_slice)
+                        .map_err(|e| Error::Decode(e.to_string()))?;
+                    meta = Some(self.process_metadata(&info)?);
+                    payload_info = Some(info);
+                    in_header = false;
+                    self.current_point.clear();
+                },
+
+                // Handle point completion
+                (false, false, NEWLINE_CHAR) => {
+                    if !self.current_point.is_empty() {
+                        if let Some(ref info) = payload_info {
+                            let mut point_buf = self.current_point.as_slice();
+                            if let Ok(point) = self.decode_point(
+                                &mut point_buf, 
+                                info.r#type, 
+                                info.year
+                            ) {
+                                points.push(point);
+                            }
+                        }
+                        self.current_point.clear();
+                    }
+                },
+
+                // Normal byte collection
+                (_, false, b) => {
+                    self.current_point.push(b);
+                },
+            }
         }
-    
-        let meta = Meta {
-            name: meta_map
-                .remove("name")
+
+        // Handle final point if any
+        if !self.current_point.is_empty() && !in_header {
+            if let Some(ref info) = payload_info {
+                let mut point_buf = self.current_point.as_slice();
+                if let Ok(point) = self.decode_point(
+                    &mut point_buf, 
+                    info.r#type, 
+                    info.year
+                ) {
+                    points.push(point);
+                }
+            }
+        }
+
+        Ok(vec![PVData { 
+            meta: meta.ok_or_else(|| Error::Decode("Missing metadata".to_string()))?,
+            data: points
+        }])
+    }
+
+    #[inline(always)]
+    fn process_metadata(&self, payload_info: &PayloadInfo) -> Result<Meta, Error> {
+        let mut meta_map: HashMap<_, Option<String>> = payload_info.headers.iter()
+            .map(|h| (h.name.clone(), Some(h.val.clone())))
+            .collect();
+        
+        meta_map.insert("name".to_string(), Some(payload_info.pvname.clone()));
+
+        Ok(Meta {
+            name: meta_map.remove("name")
                 .flatten()
                 .ok_or_else(|| Error::Decode("Missing 'name' in metadata".to_string()))?,
             DRVH: meta_map.remove("DRVH").flatten(),
@@ -64,35 +145,11 @@ impl DecoderContext {
             HOPR: meta_map.remove("HOPR").flatten(),
             NELM: meta_map.remove("NELM").flatten(),
             DESC: meta_map.remove("DESC").flatten(),
-        };
-    
-        // Skip empty line
-        iter.next();
-    
-        // Preallocate points vector
-        let mut points = Vec::with_capacity(self.points_capacity);
-    
-        // Process points
-        let mut point_buffer = Vec::with_capacity(1024);
-        for chunk in iter {
-            if chunk.is_empty() {
-                continue;
-            }
-    
-            point_buffer.clear();
-            self.unescape_new_lines(chunk, &mut point_buffer);
-            if let Ok(point) = self.decode_point(&point_buffer, type_id, year) {
-                points.push(point);
-            }
-        }
-    
-        Ok(vec![PVData { meta, data: points }])
+        })
     }
-    
-
 
     #[inline(always)]
-    fn decode_point(&self, bytes: &[u8], type_id: i32, year: i32) -> Result<Point, Error> {
+    fn decode_point(&self, bytes: &mut &[u8], type_id: i32, year: i32) -> Result<Point, Error> {
         match type_id {
             x if x == PayloadType::ScalarString as i32 => self.decode_scalar_string(bytes, year),
             x if x == PayloadType::ScalarFloat as i32 => self.decode_scalar_float(bytes, year),
@@ -101,31 +158,7 @@ impl DecoderContext {
             x if x == PayloadType::ScalarShort as i32 => self.decode_scalar_short(bytes, year),
             x if x == PayloadType::ScalarByte as i32 => self.decode_scalar_byte(bytes, year),
             x if x == PayloadType::ScalarEnum as i32 => self.decode_scalar_enum(bytes, year),
-            // Handle other types if needed
             _ => Err(Error::Invalid(format!("Unsupported type: {}", type_id))),
-        }
-    }
-
-    #[inline(always)]
-    fn unescape_new_lines(&self, input: &[u8], output: &mut Vec<u8>) {
-        let mut i = 0;
-        while i < input.len() {
-            let b = input[i];
-            if b != ESCAPE_CHAR {
-                output.push(b);
-                i += 1;
-            } else {
-                i += 1;
-                if i < input.len() {
-                    match input[i] {
-                        ESCAPE_ESCAPE_CHAR => output.push(ESCAPE_CHAR),
-                        NEWLINE_ESCAPE_CHAR => output.push(NEWLINE_CHAR),
-                        CARRIAGERETURN_ESCAPE_CHAR => output.push(CARRIAGERETURN_CHAR),
-                        b => output.push(b),
-                    }
-                }
-                i += 1;
-            }
         }
     }
 
@@ -136,6 +169,7 @@ impl DecoderContext {
                 .expect("Invalid year")
                 .and_hms_opt(0, 0, 0)
                 .expect("Invalid time")
+                .and_utc()
                 .timestamp()
         });
 
@@ -143,9 +177,8 @@ impl DecoderContext {
         total_seconds * 1000 + (nanos / 1_000_000) as i64
     }
 
-    // Implement decoder functions for each scalar type
     #[inline(always)]
-    fn decode_scalar_float(&self, bytes: &[u8], year: i32) -> Result<Point, Error> {
+    fn decode_scalar_float(&self, bytes: &mut &[u8], year: i32) -> Result<Point, Error> {
         let p = ScalarFloat::decode(bytes).map_err(|e| Error::Decode(e.to_string()))?;
         let millis = self.convert_to_unix_ms(p.secondsintoyear, p.nano, year);
 
@@ -159,7 +192,7 @@ impl DecoderContext {
     }
 
     #[inline(always)]
-    fn decode_scalar_double(&self, bytes: &[u8], year: i32) -> Result<Point, Error> {
+    fn decode_scalar_double(&self, bytes: &mut &[u8], year: i32) -> Result<Point, Error> {
         let p = ScalarDouble::decode(bytes).map_err(|e| Error::Decode(e.to_string()))?;
         let millis = self.convert_to_unix_ms(p.secondsintoyear, p.nano, year);
 
@@ -173,7 +206,7 @@ impl DecoderContext {
     }
 
     #[inline(always)]
-    fn decode_scalar_int(&self, bytes: &[u8], year: i32) -> Result<Point, Error> {
+    fn decode_scalar_int(&self, bytes: &mut &[u8], year: i32) -> Result<Point, Error> {
         let p = ScalarInt::decode(bytes).map_err(|e| Error::Decode(e.to_string()))?;
         let millis = self.convert_to_unix_ms(p.secondsintoyear, p.nano, year);
 
@@ -187,10 +220,9 @@ impl DecoderContext {
     }
 
     #[inline(always)]
-    fn decode_scalar_short(&self, bytes: &[u8], year: i32) -> Result<Point, Error> {
+    fn decode_scalar_short(&self, bytes: &mut &[u8], year: i32) -> Result<Point, Error> {
         let p = ScalarShort::decode(bytes).map_err(|e| Error::Decode(e.to_string()))?;
-        let val: i16 = p
-            .val
+        let val: i16 = p.val
             .try_into()
             .map_err(|_| Error::Decode("Value out of range for i16".to_string()))?;
         let millis = self.convert_to_unix_ms(p.secondsintoyear, p.nano, year);
@@ -205,45 +237,42 @@ impl DecoderContext {
     }
 
     #[inline(always)]
-fn decode_scalar_byte(&self, bytes: &[u8], year: i32) -> Result<Point, Error> {
-    let p = ScalarByte::decode(bytes).map_err(|e| Error::Decode(e.to_string()))?;
-    
-    // Ensure that p.val contains exactly one byte
-    let val = if p.val.len() == 1 {
-        p.val[0]
-    } else {
-        return Err(Error::Decode("Expected a single byte in ScalarByte value".to_string()));
-    };
+    fn decode_scalar_byte(&self, bytes: &mut &[u8], year: i32) -> Result<Point, Error> {
+        let p = ScalarByte::decode(bytes).map_err(|e| Error::Decode(e.to_string()))?;
+        
+        let val = if p.val.len() == 1 {
+            p.val[0]
+        } else {
+            return Err(Error::Decode("Expected a single byte in ScalarByte value".to_string()));
+        };
 
-    let millis = self.convert_to_unix_ms(p.secondsintoyear, p.nano, year);
-
-    Ok(Point {
-        secs: millis / 1000,
-        nanos: ((millis % 1000) * 1_000_000) as i32,
-        val: PointValue::Byte(val),
-        severity: p.severity.unwrap_or(0),
-        status: p.status.unwrap_or(0),
-    })
-}
-
-
-    #[inline(always)]
-    fn decode_scalar_enum(&self, bytes: &[u8], year: i32) -> Result<Point, Error> {
-        let p = ScalarEnum::decode(bytes).map_err(|e| Error::Decode(e.to_string()))?;
-        let val = p.val;
         let millis = self.convert_to_unix_ms(p.secondsintoyear, p.nano, year);
 
         Ok(Point {
             secs: millis / 1000,
             nanos: ((millis % 1000) * 1_000_000) as i32,
-            val: PointValue::Enum(val),
+            val: PointValue::Byte(val),
             severity: p.severity.unwrap_or(0),
             status: p.status.unwrap_or(0),
         })
     }
 
     #[inline(always)]
-    fn decode_scalar_string(&self, bytes: &[u8], year: i32) -> Result<Point, Error> {
+    fn decode_scalar_enum(&self, bytes: &mut &[u8], year: i32) -> Result<Point, Error> {
+        let p = ScalarEnum::decode(bytes).map_err(|e| Error::Decode(e.to_string()))?;
+        let millis = self.convert_to_unix_ms(p.secondsintoyear, p.nano, year);
+
+        Ok(Point {
+            secs: millis / 1000,
+            nanos: ((millis % 1000) * 1_000_000) as i32,
+            val: PointValue::Enum(p.val),
+            severity: p.severity.unwrap_or(0),
+            status: p.status.unwrap_or(0),
+        })
+    }
+
+    #[inline(always)]
+    fn decode_scalar_string(&self, bytes: &mut &[u8], year: i32) -> Result<Point, Error> {
         let p = ScalarString::decode(bytes).map_err(|e| Error::Decode(e.to_string()))?;
         let millis = self.convert_to_unix_ms(p.secondsintoyear, p.nano, year);
 

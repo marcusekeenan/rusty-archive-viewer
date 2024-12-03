@@ -27,14 +27,13 @@ const TEST_PVS: [&str; 35] = [
 const PV_GROUPS: [usize; 5] = [1, 5, 10, 20, 35];
 const ITERATIONS: usize = 10;
 const LIVE_DATA_DURATION: i64 = 60; // 1 minute of live data
-const HISTORICAL_TIME_RANGES: [(i64, &str); 4] = [
+const HISTORICAL_TIME_RANGES: [(i64, &str); 3] = [
     (60, "1 minute"),
     (300, "5 minutes"),
     (3600, "1 hour"),
-    (3600 * 24, "1 day"),
 ];
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize)]  
 struct PerformanceReport {
     timestamp: DateTime<Utc>,
     live_data_results: Vec<LiveDataResult>,
