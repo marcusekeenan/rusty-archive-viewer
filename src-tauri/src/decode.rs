@@ -1,12 +1,12 @@
 use crate::constants::*;
 use crate::epics::*;
 use crate::types::*;
-use bytes::{Buf, Bytes};
+// use bytes::{Buf, Bytes};
 use chrono::NaiveDate;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use prost::Message;
-use std::collections::HashMap;
+use std::time::Instant;
 
 static YEAR_STARTS: Lazy<DashMap<i32, i64>> = Lazy::new(DashMap::new);
 
@@ -30,7 +30,8 @@ impl DecoderContext {
             return Err(Error::Decode("Empty response".to_string()));
         }
 
-        // Streaming decode approach
+        let start_time = Instant::now(); // Start timing the decode process
+
         let mut points = Vec::with_capacity(self.points_capacity);
         self.decode_buffer.clear();
         self.current_point.clear();
@@ -67,7 +68,6 @@ impl DecoderContext {
 
                 // Handle header completion
                 (true, false, NEWLINE_CHAR) => {
-                    // Process header
                     let mut header_slice = self.current_point.as_slice();
                     let info = PayloadInfo::decode(&mut header_slice)
                         .map_err(|e| Error::Decode(e.to_string()))?;
@@ -101,7 +101,6 @@ impl DecoderContext {
             }
         }
 
-        // Handle final point if any
         if !self.current_point.is_empty() && !in_header {
             if let Some(ref info) = payload_info {
                 let mut point_buf = self.current_point.as_slice();
@@ -115,38 +114,65 @@ impl DecoderContext {
             }
         }
 
+        let elapsed = start_time.elapsed(); // Measure elapsed time
+        //  println!("Decoding completed in {:?}", elapsed);
+
         Ok(vec![PVData { 
             meta: meta.ok_or_else(|| Error::Decode("Missing metadata".to_string()))?,
             data: points
         }])
     }
-
+    
     #[inline(always)]
     fn process_metadata(&self, payload_info: &PayloadInfo) -> Result<Meta, Error> {
-        let mut meta_map: HashMap<_, Option<String>> = payload_info.headers.iter()
+        let mut meta_vec: Vec<(String, Option<String>)> = payload_info.headers.iter()
             .map(|h| (h.name.clone(), Some(h.val.clone())))
             .collect();
-        
-        meta_map.insert("name".to_string(), Some(payload_info.pvname.clone()));
 
-        Ok(Meta {
-            name: meta_map.remove("name")
-                .flatten()
-                .ok_or_else(|| Error::Decode("Missing 'name' in metadata".to_string()))?,
-            DRVH: meta_map.remove("DRVH").flatten(),
-            EGU: meta_map.remove("EGU").flatten(),
-            HIGH: meta_map.remove("HIGH").flatten(),
-            HIHI: meta_map.remove("HIHI").flatten(),
-            DRVL: meta_map.remove("DRVL").flatten(),
-            PREC: meta_map.remove("PREC").flatten(),
-            LOW: meta_map.remove("LOW").flatten(),
-            LOLO: meta_map.remove("LOLO").flatten(),
-            LOPR: meta_map.remove("LOPR").flatten(),
-            HOPR: meta_map.remove("HOPR").flatten(),
-            NELM: meta_map.remove("NELM").flatten(),
-            DESC: meta_map.remove("DESC").flatten(),
-        })
+        meta_vec.push(("name".to_string(), Some(payload_info.pvname.clone())));
+
+        let mut meta = Meta {
+            name: String::new(),
+            DRVH: None,
+            EGU: None,
+            HIGH: None,
+            HIHI: None,
+            DRVL: None,
+            PREC: None,
+            LOW: None,
+            LOLO: None,
+            LOPR: None,
+            HOPR: None,
+            NELM: None,
+            DESC: None,
+        };
+
+        for (key, value) in meta_vec {
+            match key.as_str() {
+                "name" => meta.name = value.unwrap_or(String::new()),
+                "DRVH" => meta.DRVH = value,
+                "EGU" => meta.EGU = value,
+                "HIGH" => meta.HIGH = value,
+                "HIHI" => meta.HIHI = value,
+                "DRVL" => meta.DRVL = value,
+                "PREC" => meta.PREC = value,
+                "LOW" => meta.LOW = value,
+                "LOLO" => meta.LOLO = value,
+                "LOPR" => meta.LOPR = value,
+                "HOPR" => meta.HOPR = value,
+                "NELM" => meta.NELM = value,
+                "DESC" => meta.DESC = value,
+                _ => {},
+            }
+        }
+
+        if meta.name.is_empty() || meta.name == "" {
+            return Err(Error::Decode("Missing 'name' in metadata".to_string()));
+        }
+
+        Ok(meta)
     }
+
 
     #[inline(always)]
     fn decode_point(&self, bytes: &mut &[u8], type_id: i32, year: i32) -> Result<Point, Error> {
