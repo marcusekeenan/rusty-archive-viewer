@@ -3,7 +3,8 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::client::ArchiverClient;
-use crate::types::{BinningOperation, Config, DataFormat, Meta, Point, ProcessingMode, UPlotData};
+use crate::types::{DataFormat, ProcessingMode, UPlotData, PVMetadata, Error};
+use crate::Config;
 
 pub struct AppState {
     client: ArchiverClient,
@@ -18,95 +19,105 @@ impl AppState {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct FetchDataOptions {
+pub struct FetchDataParams {
     pub pvs: Vec<String>,
     pub from: i64,
     pub to: i64,
-    pub target_points: Option<usize>,
+    pub mode: Option<ProcessingMode>,
     pub format: Option<DataFormat>,
 }
 
 #[tauri::command]
 pub async fn fetch_data(
     state: State<'_, AppState>,
-    options: FetchDataOptions,
+    params: FetchDataParams,
 ) -> Result<UPlotData, String> {
-    let mode = options.target_points.map(ProcessingMode::Optimized);
-    let format = options.format.unwrap_or_default();
+    if params.pvs.is_empty() {
+        return Err("No PVs provided".to_string());
+    }
 
-    state
+    if params.to <= params.from {
+        return Err("End time must be after start time".to_string());
+    }
+
+    println!("Fetch data params received: {:?}", params);
+
+    let result = state
         .client
-        .fetch_data_uplot(options.pvs, options.from, options.to, mode, format)
-        .await
-        .map(|(data, _size)| data)
-        .map_err(|e| format!("Error fetching data: {}", e))
-}
+        .fetch_data(
+            params.pvs,
+            params.from,
+            params.to,
+            params.mode,
+            params.format.unwrap_or(DataFormat::Raw),
+        )
+        .await;
 
-#[derive(Debug, Deserialize)]
-pub struct LiveDataOptions {
-    pub pvs: Vec<String>,
-    pub format: Option<DataFormat>,
-}
+        match &result {
+            Ok(data) => {
+                println!("Successfully fetched data:");
+                println!("  Timestamps count: {}", data.timestamps.len());
+                println!("  Series count: {}", data.series.len());
+                println!("  Meta count: {}", data.meta.len());
+                
+                // Print first few timestamps
+                println!("  First 5 timestamps: {:?}", 
+                    data.timestamps.iter().take(5).collect::<Vec<_>>());
+                
+                // Print first few values from each series
+                for (i, series) in data.series.iter().enumerate() {
+                    println!("  Series {} first 5 values: {:?}", 
+                        i, series.iter().take(5).collect::<Vec<_>>());
+                }
+                
+                // Print metadata
+                println!("  Meta info: {:?}", data.meta);
+            }
+            Err(e) => {
+                println!("Error fetching data: {:?}", e);
+            }
+        }
 
-#[tauri::command]
-pub async fn fetch_live_data(
-    state: State<'_, AppState>,
-    options: LiveDataOptions,
-) -> Result<UPlotData, String> {
-    let end = Utc::now().timestamp();
-    let start = end - 300; // Last 5 minutes
-    let format = options.format.unwrap_or_default();
-
-    state
-        .client
-        .fetch_data_uplot(options.pvs, start, end, Some(ProcessingMode::Raw), format)
-        .await
-        .map(|(data, _size)| data)
-        .map_err(|e| format!("Error fetching live data: {}", e))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct FetchLatestOptions {
-    pub pv: String,
-    pub format: Option<DataFormat>,
-}
-
-#[tauri::command]
-pub async fn fetch_latest(
-    state: State<'_, AppState>,
-    options: FetchLatestOptions,
-) -> Result<Point, String> {
-    let end = Utc::now().timestamp();
-    let start = end - 5; // Last 5 seconds
-    let format = options.format.unwrap_or_default();
-
-    let (data, _size) = state
-        .client
-        .fetch_data_with_processing(&options.pv, start, end, ProcessingMode::Raw, format)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    data.data
-        .last()
-        .cloned()
-        .ok_or_else(|| "No data available".to_string())
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MetadataOptions {
-    pub pv: String,
+    result.map_err(|e| match e {
+        Error::Network(e) => format!("Network error: {}", e),
+        Error::Decode(msg) => format!("Data decode error: {}", msg),
+        Error::Invalid(msg) => format!("Invalid request: {}", msg),
+    })
 }
 
 #[tauri::command]
 pub async fn get_pv_metadata(
     state: State<'_, AppState>,
-    options: MetadataOptions,
-) -> Result<Meta, String> {
-    state
+    pv: String,
+) -> Result<PVMetadata, String> {
+    if pv.is_empty() {
+        return Err("PV name cannot be empty".to_string());
+    }
+
+    let meta = state
         .client
-        .get_metadata(&options.pv)
+        .get_metadata(&pv)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| match e {
+            Error::Network(e) => format!("Network error: {}", e),
+            Error::Decode(msg) => format!("Metadata decode error: {}", msg),
+            Error::Invalid(msg) => format!("Invalid metadata: {}", msg),
+        })?;
+
+    Ok(PVMetadata {
+        name: meta.name,
+        EGU: meta.EGU,
+        PREC: meta.PREC,
+        DESC: meta.DESC,
+        LOPR: meta.LOPR,
+        HOPR: meta.HOPR,
+        DRVL: meta.DRVL,
+        DRVH: meta.DRVH,
+        LOW: meta.LOW,
+        HIGH: meta.HIGH,
+        LOLO: meta.LOLO,
+        HIHI: meta.HIHI,
+    })
 }
 
 #[tauri::command]
@@ -115,123 +126,30 @@ pub async fn test_connection(
     format: Option<DataFormat>,
 ) -> Result<bool, String> {
     let now = Utc::now().timestamp();
-    let format = format.unwrap_or_default();
-
+    let five_minutes_ago = now - 300; // Test with 5 minutes of data
+    let format = format.unwrap_or(DataFormat::Raw);
+    
+    // Test connection with a known good PV over a reasonable time range
     match state
         .client
-        .fetch_data_with_processing(
-            "ROOM:LI30:1:OUTSIDE_TEMP",
-            now - 60,
+        .fetch_data(
+            vec!["ROOM:LI30:1:OUTSIDE_TEMP".to_string()],
+            five_minutes_ago,
             now,
-            ProcessingMode::Raw,
+            Some(ProcessingMode::Raw),
             format,
         )
         .await
     {
         Ok(_) => Ok(true),
-        Err(_) => Ok(false),
+        Err(e) => {
+            println!("Connection test failed: {:?}", e);
+            Ok(false)
+        }
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BinnedDataOptions {
-    pub pvs: Vec<String>,
-    pub from: i64,
-    pub to: i64,
-    pub bin_size: u32,
-    pub operation: String,
-    pub format: Option<DataFormat>,
-}
-
 #[tauri::command]
-pub async fn fetch_binned_data(
-    state: State<'_, AppState>,
-    options: BinnedDataOptions,
-) -> Result<UPlotData, String> {
-    let operation = match options.operation.to_lowercase().as_str() {
-        "mean" => BinningOperation::Mean,
-        "max" => BinningOperation::Max,
-        "min" => BinningOperation::Min,
-        "jitter" => BinningOperation::Jitter,
-        "stddev" => BinningOperation::StdDev,
-        "count" => BinningOperation::Count,
-        "firstsample" => BinningOperation::FirstSample,
-        "lastsample" => BinningOperation::LastSample,
-        "firstfill" => BinningOperation::FirstFill,
-        "lastfill" => BinningOperation::LastFill,
-        "median" => BinningOperation::Median,
-        "variance" => BinningOperation::Variance,
-        "popvariance" => BinningOperation::PopVariance,
-        "kurtosis" => BinningOperation::Kurtosis,
-        "skewness" => BinningOperation::Skewness,
-        "linear" => BinningOperation::Linear,
-        "loess" => BinningOperation::Loess,
-        "caplotbinning" => BinningOperation::CAPlotBinning,
-        _ => return Err("Invalid binning operation".to_string()),
-    };
-
-    let mode = ProcessingMode::Binning {
-        bin_size: options.bin_size,
-        operation,
-    };
-
-    let format = options.format.unwrap_or_default();
-
-    state
-        .client
-        .fetch_data_uplot(options.pvs, options.from, options.to, Some(mode), format)
-        .await
-        .map(|(data, _size)| data)
-        .map_err(|e| format!("Error fetching binned data: {}", e))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ChartDataOptions {
-    pub pvs: Vec<String>,
-    pub from: i64,
-    pub to: i64,
-    pub target_points: Option<usize>,
-    pub format: Option<DataFormat>,
-}
-
-#[tauri::command]
-pub async fn fetch_chart_data(
-    state: State<'_, AppState>,
-    options: ChartDataOptions,
-) -> Result<UPlotData, String> {
-    let mode = options.target_points.map(ProcessingMode::Optimized);
-    let format = options.format.unwrap_or_default();
-
-    state
-        .client
-        .fetch_data_uplot(options.pvs, options.from, options.to, mode, format)
-        .await
-        .map(|(data, _size)| data)
-        .map_err(|e| format!("Error fetching chart data: {}", e))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct LiveChartDataOptions {
-    pub pvs: Vec<String>,
-    pub target_points: Option<usize>,
-    pub format: Option<DataFormat>,
-}
-
-#[tauri::command]
-pub async fn fetch_live_chart_data(
-    state: State<'_, AppState>,
-    options: LiveChartDataOptions,
-) -> Result<UPlotData, String> {
-    let end = Utc::now().timestamp();
-    let start = end - 300; // Last 5 minutes
-    let format = options.format.unwrap_or_default();
-
-    let mode = options.target_points.map(ProcessingMode::Optimized);
-
-    state
-        .client
-        .fetch_data_uplot(options.pvs, start, end, mode, format)
-        .await
-        .map(|(data, _size)| data)
-        .map_err(|e| format!("Error fetching live chart data: {}", e))
+pub fn get_current_timestamp() -> i64 {
+    Utc::now().timestamp()
 }

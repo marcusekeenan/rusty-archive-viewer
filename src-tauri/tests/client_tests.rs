@@ -2,13 +2,11 @@ use chrono::Utc;
 use rusty_archive_viewer::{
     client::ArchiverClient,
     constants::{DEFAULT_BASE_URL, DEFAULT_TIMEOUT},
-    types::{DataFormat, PVData, ProcessingMode},
-    Config,
+    types::{DataFormat, ProcessingMode, UPlotData},
+    Config, Meta,
 };
 
-// Known good PVs for testing
-const TEST_PVS: [&str; 1] = ["ROOM:LI30:1:OUTSIDE_TEMP"];
-
+const TEST_PV: &str = "CTE:CM01:2502:B1:TEMP";
 const INVALID_PV: &str = "INVALID:PV:NAME:123";
 
 #[cfg(test)]
@@ -19,71 +17,87 @@ mod tests {
     fn setup_client() -> ArchiverClient {
         let config = Config {
             url: DEFAULT_BASE_URL.to_string(),
-            timeout_secs: 60, // Adjust as needed
+            timeout_secs: 60,
         };
         ArchiverClient::new(config)
     }
 
     #[tokio::test]
-    async fn test_data_formats() {
+    async fn test_basic_modes() {
         let client = setup_client();
         let now = Utc::now().timestamp();
-        let one_hour_ago = now - 3600;
-        let pv = TEST_PVS[0];
+        let one_day_ago = now - 86400;
+        let pvs = vec![TEST_PV.to_string()];
 
-        println!("\nTesting different data formats for {}:", pv);
+        let modes = [
+            ProcessingMode::Raw,
+            ProcessingMode::Mean,
+            ProcessingMode::Max,
+            ProcessingMode::Min,
+            ProcessingMode::FirstSample,
+            ProcessingMode::LastSample,
+        ];
 
-        for format in [DataFormat::Raw, DataFormat::Json] {
-            let result = client.fetch_data(pv, one_hour_ago, now, format).await;
+        println!("\nTesting basic processing modes over 24 hours:");
+
+        for mode in modes {
+            println!("\nTesting mode: {:?}", mode);
+            let result = client
+                .fetch_data(pvs.clone(), one_day_ago, now, Some(mode), DataFormat::Raw)
+                .await;
 
             match result {
-                Ok((data, size)) => {
-                    println!("\nFormat {:?}:", format);
-                    println!("  Points: {}", data.data.len());
-                    println!("  Data size: {} bytes", size);
-                    if let Some(first) = data.data.first() {
-                        println!("  First value: {}", first.val);
-                        println!("  Timestamp: secs={}, nanos={}", first.secs, first.nanos);
+                Ok(data) => {
+                    println!("  Points: {}", data.series[0].len());
+                    if let Some(first) = data.series[0].first() {
+                        println!("  First value: {}", first);
                     }
                 }
-                Err(e) => println!("  Error with format {:?}: {}", format, e),
+                Err(e) => println!("Error: {}", e),
             }
         }
     }
 
     #[tokio::test]
-    async fn test_historical_parallel_fetch() {
+    async fn test_optimized_mode() {
         let client = setup_client();
         let now = Utc::now().timestamp();
-        let one_hour_ago = now - 3600;
+        let pvs = vec![TEST_PV.to_string()];
 
-        let pvs: Vec<String> = TEST_PVS.iter().map(|&s| s.to_string()).collect();
+        // Test different time ranges for optimization
+        let ranges = [
+            (now - 3600, "1 hour"),
+            (now - 86400, "1 day"),
+            (now - 7 * 86400, "1 week"),
+        ];
 
-        println!("\nTesting parallel fetch for multiple PVs:");
+        println!("\nTesting optimized mode with different time ranges:");
 
-        let fetch_tasks = pvs.iter().map(|pv| {
-            let client = client.clone();
-            let pv = pv.clone();
-            async move {
-                client
-                    .fetch_data(&pv, one_hour_ago, now, DataFormat::Raw)
-                    .await
-            }
-        });
+        for (start, range_desc) in ranges {
+            println!("\nTesting range: {}", range_desc);
+            
+            // Test both Raw and Json formats
+            for format in [DataFormat::Raw, DataFormat::Json] {
+                println!("Using format: {:?}", format);
+                let result = client
+                    .fetch_data(
+                        pvs.clone(),
+                        start,
+                        now,
+                        Some(ProcessingMode::Optimized),
+                        format,
+                    )
+                    .await;
 
-        let results: Vec<_> = futures::future::join_all(fetch_tasks).await;
-
-        for (i, result) in results.into_iter().enumerate() {
-            match result {
-                Ok((data, size)) => {
-                    println!("\n{}:", TEST_PVS[i]);
-                    println!("  Points: {}", data.data.len());
-                    println!("  Data size: {} bytes", size);
-                    if let Some(point) = data.data.first() {
-                        println!("  First value: {}", point.val);
+                match result {
+                    Ok(data) => {
+                        println!("  Points returned: {}", data.series[0].len());
+                        if let Some(first) = data.series[0].first() {
+                            println!("  First value: {}", first);
+                        }
                     }
+                    Err(e) => println!("  Error: {}", e),
                 }
-                Err(e) => println!("  Error fetching data for {}: {}", TEST_PVS[i], e),
             }
         }
     }
@@ -94,17 +108,22 @@ mod tests {
         let now = Utc::now().timestamp();
 
         let test_cases = [
-            (INVALID_PV, now - 3600, now, "invalid PV"),
-            (TEST_PVS[0], now, now - 3600, "invalid time range"),
-            (TEST_PVS[0], -1000000000, now, "very old timestamp"),
+            (vec![INVALID_PV.to_string()], now - 3600, now, "invalid PV"),
+            (
+                vec![TEST_PV.to_string()],
+                now,
+                now - 3600,
+                "end time before start time",
+            ),
         ];
 
         println!("\nTesting error conditions:");
 
-        for (pv, start, end, case) in test_cases.iter() {
+        for (pvs, start, end, case) in test_cases.iter() {
             println!("\nTesting {}", case);
-
-            let result = client.fetch_data(pv, *start, *end, DataFormat::Raw).await;
+            let result = client
+                .fetch_data(pvs.clone(), *start, *end, Some(ProcessingMode::Raw), DataFormat::Raw)
+                .await;
 
             assert!(result.is_err(), "Expected error for {}", case);
             println!("Got expected error: {:?}", result.err());
@@ -114,50 +133,14 @@ mod tests {
     #[tokio::test]
     async fn test_metadata() {
         let client = setup_client();
-
-        for pv in TEST_PVS.iter() {
-            let result = client.get_metadata(pv).await;
-
-            match result {
-                Ok(meta) => {
-                    println!("\nMetadata for {}:", pv);
-                    println!("{:#?}", meta);
-                }
-                Err(e) => println!("Error fetching metadata for {}: {}", pv, e),
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_performance() {
-        let client = setup_client();
-        let now = Utc::now().timestamp();
-        let one_day_ago = now - 86400;
-        let pv = TEST_PVS[0];
-
-        println!("\nPerformance test:");
-
-        let start = Instant::now();
-        let result = client
-            .fetch_data(pv, one_day_ago, now, DataFormat::Raw)
-            .await;
-        let duration = start.elapsed();
+        let result = client.get_metadata(TEST_PV).await;
 
         match result {
-            Ok((data, size)) => {
-                println!("  Fetch time: {:?}", duration);
-                println!("  Points: {}", data.data.len());
-                println!("  Data size: {} bytes", size);
-                println!(
-                    "  Points per second: {:.2}",
-                    data.data.len() as f64 / duration.as_secs_f64()
-                );
-                println!(
-                    "  Bytes per second: {:.2}",
-                    size as f64 / duration.as_secs_f64()
-                );
+            Ok(meta) => {
+                println!("\nMetadata for {}:", TEST_PV);
+                println!("{:#?}", meta);
             }
-            Err(e) => println!("Error in performance test: {}", e),
+            Err(e) => println!("Error fetching metadata: {}", e),
         }
     }
 
@@ -166,29 +149,23 @@ mod tests {
         let client = setup_client();
         let now = Utc::now().timestamp();
         let five_minutes_ago = now - 300;
+        let pvs = vec![TEST_PV.to_string()];
 
-        println!("\nTesting live data fetch:");
+        println!("\nTesting live data fetch with Raw mode:");
 
-        for pv in TEST_PVS.iter() {
-            let result = client
-                .fetch_data(pv, five_minutes_ago, now, DataFormat::Raw)
-                .await;
+        let result = client
+            .fetch_data(pvs, five_minutes_ago, now, Some(ProcessingMode::Raw), DataFormat::Raw)
+            .await;
 
-            match result {
-                Ok((data, size)) => {
-                    println!("\nLive data for {}:", pv);
-                    println!("  Points: {}", data.data.len());
-                    println!("  Data size: {} bytes", size);
-                    if let Some(last) = data.data.last() {
-                        println!("  Latest value: {}", last.val);
-                        println!(
-                            "  Latest timestamp: secs={}, nanos={}",
-                            last.secs, last.nanos
-                        );
-                    }
+        match result {
+            Ok(data) => {
+                println!("  Points: {}", data.series[0].len());
+                if let Some(last) = data.series[0].last() {
+                    println!("  Latest value: {}", last);
+                    println!("  Latest timestamp: {}", data.timestamps.last().unwrap());
                 }
-                Err(e) => println!("Error fetching live data for {}: {}", pv, e),
             }
+            Err(e) => println!("Error fetching live data: {}", e),
         }
     }
 }

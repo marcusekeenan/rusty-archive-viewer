@@ -1,10 +1,10 @@
 import { For, Show, createSignal, createEffect } from "solid-js";
 import { TbPencil, TbTrash, TbChevronRight, TbPlus } from "solid-icons/tb";
-import type { AxisConfig } from "../chart/types";
-import type { PVWithProperties, PenProperties } from "./types";
+import type { AxisConfig } from "../../types";
+import type { PVWithProperties, PenProperties } from "../../types";
 import { AxisPropertiesDialog } from "./AxisPropertiesDialog";
 import PenPropertiesDialog from "./PenPropertiesDialog";
-import { DEFAULT_PEN_PROPERTIES } from "./types";
+import { DEFAULT_PEN_PROPERTIES } from "../../types";
 import { getNextColor } from "./colors";
 
 interface UnifiedManagerProps {

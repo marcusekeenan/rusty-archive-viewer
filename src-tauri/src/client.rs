@@ -1,13 +1,11 @@
 use crate::decode::DecoderContext;
 use crate::decode_helpers::format_date_for_archiver;
 use crate::types::{
-    BinningOperation, Config, DataFormat, Error, Meta, PVData, PVDataJson, PointValue,
-    ProcessingMode, UPlotData,
+    DataFormat, Error, Meta, PVData, PVDataJson, Point, PointValue, ProcessingMode, UPlotData,
 };
-use crate::Point;
+use crate::Config;
 use futures::future::join_all;
-use regex::Regex;
-use reqwest::{Client, Response};
+use reqwest::Client;
 use tokio::task;
 use url::Url;
 
@@ -28,125 +26,175 @@ impl ArchiverClient {
         }
     }
 
-    pub async fn fetch_data_uplot(
+    pub async fn fetch_data(
         &self,
         pvs: Vec<String>,
         start: i64,
         end: i64,
         mode: Option<ProcessingMode>,
         format: DataFormat,
-    ) -> Result<(UPlotData, usize), Error> {
-        let mode = mode.unwrap_or_else(|| ProcessingMode::determine_optimal(start, end));
-        let (pv_data, total_size) = self
-            .fetch_historical_data(pvs, start, end, mode, format)
-            .await?;
-
-        let uplot_data = task::spawn_blocking(move || Self::convert_to_uplot(pv_data))
-            .await
-            .map_err(|e| Error::Invalid(e.to_string()))?;
-
-        Ok((uplot_data, total_size))
-    }
-
-    pub async fn fetch_historical_data(
-        &self,
-        pvs: Vec<String>,
-        start: i64,
-        end: i64,
-        mode: ProcessingMode,
-        format: DataFormat,
-    ) -> Result<(Vec<PVData>, usize), Error> {
+    ) -> Result<UPlotData, Error> {
+        println!("Starting fetch_data with {} PVs", pvs.len());
+        let processing_mode = mode.unwrap_or(ProcessingMode::Raw);
+        println!("Using processing mode: {:?}", processing_mode);
+    
         let fetch_tasks: Vec<_> = pvs
             .into_iter()
             .map(|pv| {
                 let client = self.clone();
-                let mode = mode.clone();
-                task::spawn(async move {
-                    client
-                        .fetch_data_with_processing(&pv, start, end, mode, format)
-                        .await
-                })
+                let mode = processing_mode.clone();
+                task::spawn(
+                    async move { 
+                        println!("Fetching data for PV: {}", pv);
+                        let result = client.fetch_single_pv(&pv, start, end, mode, format).await;
+                        println!("Fetch result for {}: {:?}", pv, result.is_ok());
+                        result
+                    },
+                )
             })
             .collect();
-
+    
+        println!("Created {} fetch tasks", fetch_tasks.len());
         let results = join_all(fetch_tasks).await;
+        println!("Completed all fetch tasks");
+    
         let mut pv_data = Vec::new();
-        let mut total_size = 0;
-
+    
         for result in results {
             match result {
-                Ok(Ok((data, size))) => {
-                    pv_data.push(data);
-                    total_size += size;
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(e) => return Err(Error::Invalid(e.to_string())),
+                Ok(Ok(data)) => {
+                    println!("Successfully processed PV data with {} points", data.data.len());
+                    pv_data.push(data)
+                },
+                Ok(Err(e)) => {
+                    println!("Error in PV data: {:?}", e);
+                    return Err(e)
+                },
+                Err(e) => {
+                    println!("Task error: {:?}", e);
+                    return Err(Error::Invalid(e.to_string()))
+                },
             }
         }
-
-        Ok((pv_data, total_size))
+    
+        println!("Converting {} PV datasets to uplot format", pv_data.len());
+        let uplot_data = task::spawn_blocking(move || {
+            let result = Self::convert_to_uplot(pv_data);
+            println!("Conversion complete: {} timestamps, {} series", 
+                result.timestamps.len(), 
+                result.series.len()
+            );
+            result
+        })
+        .await
+        .map_err(|e| {
+            println!("Error in conversion task: {:?}", e);
+            Error::Invalid(e.to_string())
+        })?;
+    
+        println!("Returning uplot data");
+        Ok(uplot_data)
     }
 
-    pub async fn fetch_data_with_processing(
+    async fn fetch_single_pv(
         &self,
         pv: &str,
         start: i64,
         end: i64,
         mode: ProcessingMode,
         format: DataFormat,
-    ) -> Result<(PVData, usize), Error> {
-        match mode {
-            ProcessingMode::Raw => self.fetch_data(pv, start, end, format).await,
-            _ => {
-                let processed_pv = match &mode {
-                    ProcessingMode::Raw => unreachable!(),
-                    ProcessingMode::Optimized(points) => format!("optimized_{}({})", points, pv),
-                    ProcessingMode::Binning {
-                        bin_size,
-                        operation,
-                    } => match operation {
-                        BinningOperation::CAPlotBinning => format!("caplotbinning({})", pv),
-                        _ => format!(
-                            "{}_{}({})",
-                            operation.to_string().to_lowercase(),
-                            bin_size,
-                            pv
-                        ),
-                    },
-                };
-                self.fetch_data(&processed_pv, start, end, format).await
+    ) -> Result<PVData, Error> {
+        // Convert OptimizedAuto to concrete optimization if needed
+        let start_date = format_date_for_archiver(start * 1000)
+        .ok_or_else(|| Error::Invalid("Invalid start timestamp".to_string()))?;
+    let end_date = format_date_for_archiver(end * 1000)
+        .ok_or_else(|| Error::Invalid("Invalid end timestamp".to_string()))?;
+
+    // Format the PV with the operator (e.g., mean or optimized)
+    let processed_pv = mode.format_pv(pv);
+
+    // Build the parameter list
+    let params = vec![
+        ("pv", processed_pv.as_str()),
+        ("from", &start_date),
+        ("to", &end_date),
+        ("fetchLatestMetadata", "true"),
+    ];
+
+    // Build the URL based on the data format
+    let url = self.build_url(
+        match format {
+            DataFormat::Raw => "data/getData.raw",
+            DataFormat::Json => "data/getData.json",
+        },
+        &params,
+    )?;
+
+        println!("url: {}", url);
+        let response = self.client.get(url).send().await.map_err(Error::Network)?;
+        // println!("response: {:?}", response);
+        match format {
+            DataFormat::Raw => {
+                println!("Raw format being called");
+                let bytes = response.bytes().await.map_err(Error::Network)?;
+                let mut decoder = DecoderContext::new(self.determine_batch_size(end - start));
+                let pv_data = decoder.decode_response(&bytes)?;
+                //println!("pv_data: {:?}", pv_data);
+                pv_data
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| Error::Invalid("No data returned".to_string()))
+            }
+            DataFormat::Json => {
+                let bytes = response.bytes().await.map_err(Error::Network)?;
+
+                let json_data: Vec<PVDataJson> = serde_json::from_slice(&bytes)
+                    .map_err(|e| Error::Invalid(format!("Failed to parse JSON: {}", e)))?;
+
+                let pv_data_json = json_data.into_iter().next().ok_or_else(|| {
+                    Error::Invalid("No data returned in JSON response".to_string())
+                })?;
+
+                let data = pv_data_json
+                    .data
+                    .into_iter()
+                    .map(|point| {
+                        Ok(Point {
+                            secs: point.secs,
+                            nanos: point.nanos,
+                            val: point.to_point_value()?,
+                            severity: point.severity.unwrap_or(0) as i32,
+                            status: point.status.unwrap_or(0) as i32,
+                        })
+                    })
+                    .collect::<Result<Vec<Point>, Error>>()?;
+
+                Ok(PVData {
+                    meta: pv_data_json.meta,
+                    data,
+                })
             }
         }
     }
 
-    pub async fn fetch_data(
-        &self,
-        pv: &str,
-        start: i64,
-        end: i64,
-        format: DataFormat,
-    ) -> Result<(PVData, usize), Error> {
-        let start_date = format_date_for_archiver(start * 1000)
-            .ok_or_else(|| Error::Invalid("Invalid start timestamp".to_string()))?;
-        let end_date = format_date_for_archiver(end * 1000)
-            .ok_or_else(|| Error::Invalid("Invalid end timestamp".to_string()))?;
+    fn build_url(&self, path: &str, params: &[(&str, &str)]) -> Result<Url, Error> {
+        let mut url = Url::parse(&format!("{}/{}", self.base_url, path))
+            .map_err(|e| Error::Invalid(format!("Invalid URL: {}", e)))?;
+        url.query_pairs_mut().extend_pairs(params);
+        Ok(url)
+    }
 
-        let endpoint = match format {
-            DataFormat::Raw => "data/getData.raw",
-            DataFormat::Json => "data/getData.json",
-        };
+    fn determine_batch_size(&self, duration_seconds: i64) -> usize {
+        match duration_seconds {
+            d if d <= 5 => 10,
+            d if d <= 60 => 30,
+            d if d <= 300 => 100,
+            _ => 500,
+        }
+    }
 
-        let url = self.build_url(
-            endpoint,
-            &[
-                ("pv", pv),
-                ("from", &start_date),
-                ("to", &end_date),
-                ("fetchLatestMetadata", "true"),
-            ],
-        )?;
-
-        //  println!("Requesting URL: {}", url);
+    pub async fn get_metadata(&self, pv: &str) -> Result<Meta, Error> {
+        let url = self.build_url("bpl/getMetadata", &[("pv", pv)])?;
 
         let response = self
             .client
@@ -162,213 +210,22 @@ impl ArchiverClient {
                 .await
                 .unwrap_or_else(|_| "Unable to read error response".to_string());
             return Err(Error::Invalid(format!(
-                "Server returned {} for {}. Error: {}",
+                "Server returned {} for {}\nResponse: {}",
                 status, url, error_body
             )));
         }
 
-        let content_length = response
-            .headers()
-            .get(reqwest::header::CONTENT_LENGTH)
-            .and_then(|cl| cl.to_str().ok())
-            .and_then(|cl| cl.parse::<usize>().ok())
-            .unwrap_or(0);
+        let bytes = response.bytes().await.map_err(Error::Network)?;
 
-        match format {
-            DataFormat::Raw => {
-                let bytes = response.bytes().await.map_err(Error::Network)?;
-                let duration_seconds = end - start;
-                let content_size = bytes.len();
-            
-                // Calculate batch size based on duration
-                let batch_size = match duration_seconds {
-                    d if d <= 5 => 10,   // Small batch for live data
-                    d if d <= 60 => 30,  // Moderate batch for 1-minute data
-                    d if d <= 300 => 100, // Larger batch for 5-minute data
-                    _ => 500,            // Largest batch for long-term data
-                };
-            
-                // Initialize the DecoderContext
-                let mut decoder_context = DecoderContext::new(batch_size);
-            
-                // Decode the response
-                let pv_data = decoder_context.decode_response(&bytes)?;
-            
-                // Return the first PV data and content size
-                Ok((
-                    pv_data
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| Error::Invalid("No data returned".to_string()))?,
-                    content_size,
-                ))
-            }            
-            DataFormat::Json => {
-                // Read the response body as text
-                let text = response.text().await.map_err(Error::Network)?;
-                //  println!("Raw JSON response:\n{}", text);
-
-                // Attempt to parse the JSON response
-                let pv_data_json: Vec<PVDataJson> = match serde_json::from_str(&text) {
-                    Ok(data) => data,
-                    Err(e) => {
-                        println!("[ERROR] JSON parsing error: {}", e);
-
-                        // Extract error line and column if available
-                        let line = e.line();
-                        let column = e.column();
-
-                        if line > 0 {
-                            println!("[ERROR] Error occurred at line {}, column {}", line, column);
-                            let lines: Vec<&str> = text.lines().collect();
-                            if line <= lines.len() {
-                                println!("[ERROR] Problematic line: {}", lines[line - 1]);
-                                println!("[ERROR] {}^", " ".repeat(column.saturating_sub(1)));
-                            }
-                        } else {
-                            println!(
-                                "[ERROR] Could not determine the line or column of the error."
-                            );
-                        }
-
-                        return Err(Error::Invalid(format!(
-                            "Failed to parse JSON: {}. JSON snippet:\n{}",
-                            e,
-                            &text[..std::cmp::min(500, text.len())]
-                        )));
-                    }
-                };
-
-                // println!(
-                //     "[DEBUG] Successfully parsed JSON data for {} PVs",
-                //     pv_data_json.len()
-                // );
-
-                // Ensure we have at least one PVDataJson in the parsed JSON
-                if pv_data_json.is_empty() {
-                    return Err(Error::Invalid(
-                        "No data returned in the JSON response".to_string(),
-                    ));
-                }
-
-                // Convert PVDataJson into PVData
-                let pv_data: Vec<PVData> = pv_data_json
-                    .into_iter()
-                    .map(|json| PVData {
-                        meta: json.meta,
-                        data: json
-                            .data
-                            .into_iter()
-                            .map(|point_json| Point {
-                                secs: point_json.secs,
-                                nanos: point_json.nanos,
-                                val: PointValue::from(point_json.val), // Convert serde_json::Value to PointValue
-                                severity: point_json.severity.unwrap_or(0) as i32, // Provide default value
-                                status: point_json.status.unwrap_or(0) as i32, // Provide default value
-                            })
-                            .collect(),
-                    })
-                    .collect();
-
-                // Debugging output for the parsed data
-                // println!(
-                //     "[DEBUG] Successfully converted JSON data to {} PV(s)",
-                //     pv_data.len()
-                // );
-                if let Some(first_pv) = pv_data.first() {
-                    // println!("[DEBUG] First PV name: {}", first_pv.meta.name);
-                    // println!("[DEBUG] Number of data points: {}", first_pv.data.len());
-                    // if let Some(first_point) = first_pv.data.first() {
-                    //     println!("[DEBUG] First data point: {:?}", first_point);
-                    // }
-                }
-
-                // Return the first PVData and the content length (if available)
-                Ok((pv_data.into_iter().next().unwrap(), content_length))
-            }
-        }
-    }
-    fn build_url(&self, path: &str, params: &[(&str, &str)]) -> Result<Url, Error> {
-        let mut url = Url::parse(&format!("{}/{}", self.base_url, path))
-            .map_err(|e| Error::Invalid(format!("Invalid URL: {}", e)))?;
-        url.query_pairs_mut().extend_pairs(params);
-        Ok(url)
-    }
-
-    pub async fn get_metadata(&self, pv: &str) -> Result<Meta, Error> {
-        // Build the URL
-        let url = self.build_url("bpl/getMetadata", &[("pv", pv)])?;
-        //  println!("[DEBUG] Built URL: {}", url);
-
-        // Send the request
-        let response = match self.client.get(url.clone()).send().await {
-            Ok(resp) => {
-                //  println!("[DEBUG] Received response with status: {}", resp.status());
-                resp
-            }
-            Err(err) => {
-                println!("[ERROR] Failed to send request: {}", err);
-                return Err(Error::Network(err));
-            }
-        };
-
-        // Get the response status
-        let status = response.status();
-        //  println!("[DEBUG] Response status: {}", status);
-
-        // Read the response body
-        let bytes = match response.bytes().await {
-            Ok(b) => {
-                //  println!("[DEBUG] Successfully read response bytes");
-                b
-            }
-            Err(err) => {
-                println!("[ERROR] Failed to read response bytes: {}", err);
-                return Err(Error::Network(err));
-            }
-        };
-
-        // Check if the status is not successful
-        if !status.is_success() {
-            let response_text = String::from_utf8_lossy(&bytes);
-            println!(
-                "[ERROR] Server returned error status {} for URL {}\nResponse: {}",
-                status, url, response_text
-            );
-            return Err(Error::Invalid(format!(
-                "Server returned {} for {}\nResponse: {}",
-                status, url, response_text
-            )));
-        }
-
-        // Parse the metadata
-        let meta_data: Meta = match serde_json::from_slice(&bytes) {
-            Ok(data) => {
-                //  println!("[DEBUG] Successfully parsed metadata JSON");
-                data
-            }
-            Err(err) => {
-                let snippet = String::from_utf8_lossy(&bytes[..bytes.len().min(200)]);
-                println!(
-                    "[ERROR] Failed to parse metadata JSON: {}\nResponse snippet: {}",
-                    err, snippet
-                );
-                return Err(Error::Invalid(format!(
-                    "Failed to parse metadata JSON: {}\nResponse snippet: {}",
-                    err, snippet
-                )));
-            }
-        };
-
-        // Return the parsed metadata
-        //  println!("[DEBUG] Metadata fetched successfully for PV: {}", pv);
-        Ok(meta_data)
+        serde_json::from_slice(&bytes)
+            .map_err(|e| Error::Invalid(format!("Failed to parse metadata: {}", e)))
     }
 
     fn convert_to_uplot(pv_data: Vec<PVData>) -> UPlotData {
         use std::collections::{BTreeSet, HashMap};
 
-        // Collect all unique timestamps
+        // ln!("Here is the pv_data before conversion: {:?}", pv_data);
+
         let mut timestamps_set = BTreeSet::new();
         let mut series_data: Vec<HashMap<i64, f64>> = vec![];
 
@@ -404,21 +261,10 @@ impl ArchiverClient {
             series.push(data);
         }
 
-        // Convert timestamps to f64 for plotting
-        let timestamps_f64: Vec<f64> = timestamps.iter().map(|&ts| ts as f64).collect();
-
         UPlotData {
-            timestamps: timestamps_f64,
+            timestamps: timestamps.iter().map(|&ts| ts as f64).collect(),
             series,
             meta: pv_data.iter().map(|pv| pv.meta.clone()).collect(),
         }
     }
-}
-
-fn get_content_length(response: &Response) -> Option<usize> {
-    response
-        .headers()
-        .get(reqwest::header::CONTENT_LENGTH)
-        .and_then(|cl| cl.to_str().ok())
-        .and_then(|cl| cl.parse::<usize>().ok())
 }

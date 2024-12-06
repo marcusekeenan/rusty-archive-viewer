@@ -1,68 +1,79 @@
 import { invoke } from "@tauri-apps/api/tauri";
-import type { Meta, Point, PVData, PVMetadata } from '../types';
+import { 
+  DataFormat,
+  ProcessingMode,
+  UPlotData,
+  PVMetadata,
+} from '../types';
 
-interface FetchParams {
-    [key: string]: string[] | number;
-    pvs: string[];
-    from: number;
-    to: number;
+interface FetchDataParams {
+  pvs: string[];
+  from: number;
+  to: number;
+  mode?: { [key: string]: null };  // For untagged enum, send variant as key
+  format: DataFormat;
 }
 
 export async function fetchData(
-    pvs: string[],
-    start: Date,
-    end: Date
-): Promise<PVData[]> {
-    const params: FetchParams = {
-        pvs,
-        from: dateToUnixSeconds(start),
-        to: dateToUnixSeconds(end),
-    };
-    
-    try {
-        return await invoke<PVData[]>("fetch_data", params);
-    } catch (error) {
-        console.error("Error fetching data:", error);
-        throw error;
+  pvs: string[],
+  from: Date,
+  to: Date,
+  mode: ProcessingMode = ProcessingMode.Raw,
+  format: DataFormat = DataFormat.Raw
+): Promise<UPlotData> {
+  const params: FetchDataParams = {
+    pvs,
+    from: Math.floor(from.getTime() / 1000),
+    to: Math.floor(to.getTime() / 1000),
+    mode: mode ? { [mode]: null } : undefined,  // Convert enum to { "Raw": null } format
+    format,
+  };
+
+  console.log('Mode being sent:', mode);
+  console.log('Sending request with params:', JSON.stringify(params, null, 2));
+
+  try {
+    const response = await invoke<UPlotData>('fetch_data', { params });
+    console.log('Received response:', JSON.stringify(response, null, 2));
+
+    if (!response || !Array.isArray(response.timestamps) || !Array.isArray(response.series)) {
+      throw new Error('Invalid or empty response from server');
     }
+
+    return response;
+  } catch (error) {
+    console.error('Error fetching data:', error);
+    throw error;
+  }
 }
 
-export async function fetchLatest(pv: string): Promise<Point> {
-    try {
-        return await invoke<Point>("fetch_latest", { pv });
-    } catch (error) {
-        console.error("Error fetching latest data:", error);
-        throw error;
+// Rest of the file remains the same
+export async function getPVMetadata(pvName: string): Promise<PVMetadata> {
+  if (!pvName) {
+    throw new Error('PV name is required');
+  }
+
+  try {
+    const response = await invoke<PVMetadata>('get_pv_metadata', { pv: pvName });
+    if (!response || typeof response !== 'object') {
+      throw new Error('Invalid metadata response');
     }
+    return response;
+  } catch (error) {
+    console.error(`Error fetching metadata for ${pvName}:`, error);
+    throw error;
+  }
 }
 
-export async function getPVMetadata(pv: string): Promise<PVMetadata> {
-    try {
-        const meta = await invoke<Meta>("get_pv_metadata", { pv });
-        return { name: pv, ...meta };
-    } catch (error) {
-        console.error("Error fetching PV metadata:", error);
-        throw error;
-    }
+export async function testConnection(format: DataFormat = DataFormat.Raw): Promise<boolean> {
+  try {
+    return await invoke<boolean>("test_connection", { format });
+  } catch (error) {
+    console.error('Error testing connection:', error);
+    return false;
+  }
 }
 
-export async function testConnection(): Promise<boolean> {
-    try {
-        return await invoke<boolean>("test_connection");
-    } catch (error) {
-        console.error("Error testing connection:", error);
-        throw error;
-    }
+export function getCurrentTimestamp(): number {
+  return Math.floor(Date.now() / 1000);
 }
-
-// Time utility functions
-const dateToUnixSeconds = (date: Date): number => Math.floor(date.getTime() / 1000);
-
-export const formatTimestamp = (timestamp: number): string => 
-    new Date(timestamp * 1000).toISOString();
-
-export const getCurrentTimestamp = (): number => 
-    dateToUnixSeconds(new Date());
-
-export const pointToTimestamp = (point: Point): number => 
-    point.secs * 1000 + point.nanos / 1_000_000;

@@ -1,17 +1,16 @@
 // src/components/chart/types.ts
 
 import type { 
-  PVData, 
   PVWithProperties, 
   AxisConfig,
-  TimeRange 
+  TimeRange,
+  UPlotData
 } from '../../types';
 
 export interface ChartProps {
-  data: PVData[];
+  data: UPlotData;
   pvs: PVWithProperties[];
   timeRange: TimeRange;
-  timezone: string;
   axes: Map<string, AxisConfig>;
 }
 

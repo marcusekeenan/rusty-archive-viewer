@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use rusty_archive_viewer::{
     client::ArchiverClient,
     constants::{DEFAULT_BASE_URL, DEFAULT_TIMEOUT},
-    types::{DataFormat, PVData, ProcessingMode},
-    Config,
+    types::{DataFormat, ProcessingMode, UPlotData},
+    Config, Meta,
 };
 use serde::Serialize;
 use std::{error::Error, time::Instant};
@@ -125,21 +125,27 @@ async fn run_performance_test(
 
     for _ in 0..iterations {
         let fetch_start = Instant::now();
-        let (result, size) = client
-            .fetch_historical_data(pvs.to_vec(), start, end, ProcessingMode::Raw, format)
+        let result = client
+            .fetch_data(pvs.to_vec(), start, end, Some(ProcessingMode::Raw), format)
             .await?;
         let fetch_time = fetch_start.elapsed().as_secs_f64();
 
+        // Estimate size from result
+        let size = result.timestamps.len() * 8 // 8 bytes per f64 timestamp
+    + result.series.iter().map(|s| s.len() * 8).sum::<usize>() // 8 bytes per f64 in series
+    + result.meta.len() * std::mem::size_of::<Meta>(); // size of metadata
+
         let processing_start = Instant::now();
-        let _processed_result: Vec<PVData> = result.into_iter().map(PVData::from).collect();
+        let _processed_result: UPlotData = result;
         let processing_time = processing_start.elapsed().as_secs_f64();
 
         total_fetch_time += fetch_time;
         total_processing_time += processing_time;
         total_response_size += size;
         total_points_count += _processed_result
+            .series
             .iter()
-            .map(|pv| pv.data.len())
+            .map(|s| s.len())
             .sum::<usize>();
     }
 

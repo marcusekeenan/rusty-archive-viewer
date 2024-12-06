@@ -11,7 +11,6 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             commands::fetch_data,
-            commands::fetch_latest,
             commands::test_connection,
             commands::get_pv_metadata, // Add this line
         ])

@@ -1,24 +1,16 @@
 import { createSignal, createEffect, createMemo, onMount, onCleanup, Show } from "solid-js";
-import { createStore } from "solid-js/store";
+import { createStore, StoreSetter } from "solid-js/store";
 import { ErrorBoundary } from "solid-js";
-
-import TimeRangeSelector from "../components/controls/TimeRangeSelector";
-import ControlPanel from "../components/controls/ControlPanel";
-import ChartJS from "../components/chart/ChartJS";
-import ConnectionStatus from "../components/controls/ConnectionStatus";
+import { fetchData, getPVMetadata, testConnection } from "../utils/archiverApi";
+import { DataFormat, ProcessingMode, UPlotData, PVWithProperties, AxisConfig } from "../types";
 import UnifiedManager from "../components/controls/UnifiedManager";
+import ControlPanel from "../components/controls/ControlPanel";
+import UPlotChart from "../components/chart/UPlotChart";
+import TimeRangeSelector from "../components/controls/TimeRangeSelector";
+import ConnectionStatus from "../components/controls/ConnectionStatus";
 
-import { fetchData, fetchLatest, getPVMetadata, testConnection } from "../utils/archiverApi";
-import { PVWithProperties, PenProperties, AxisConfig, PVMetadata } from "../types/pv";
-import { PVData, Point, Meta } from "../types/rust_types";
-import { DataOperator } from "../types/api";
-import { getCommonMetadata } from "../types/pv";
-
-// Constants
 const CONNECTION_CHECK_INTERVAL = 30000;
 const DEFAULT_UPDATE_INTERVAL = 1000;
-const MIN_UPDATE_INTERVAL = 1000;
-const MAX_UPDATE_INTERVAL = 30000;
 
 interface ViewerState {
   selectedPVs: PVWithProperties[];
@@ -27,7 +19,8 @@ interface ViewerState {
     start: Date;
     end: Date;
   };
-  data: PVData[];
+  timeRangeSeconds: number;
+  data: UPlotData | null;
   loading: boolean;
   error: string | null;
   lastRefresh: Date | null;
@@ -38,7 +31,8 @@ interface ViewerState {
     updateInterval: number;
   };
   axes: Map<string, AxisConfig>;
-  dataOperator: DataOperator;
+  processingMode: ProcessingMode;
+  dataFormat: DataFormat;
   isConnected: boolean;
 }
 
@@ -49,7 +43,8 @@ const INITIAL_STATE: ViewerState = {
     start: new Date(Date.now() - 3600000),
     end: new Date(),
   },
-  data: [],
+  timeRangeSeconds: 3600,
+  data: null,
   loading: false,
   error: null,
   lastRefresh: null,
@@ -60,7 +55,8 @@ const INITIAL_STATE: ViewerState = {
     updateInterval: DEFAULT_UPDATE_INTERVAL,
   },
   axes: new Map(),
-  dataOperator: DataOperator.Optimized,
+  processingMode: ProcessingMode.Optimized,
+  dataFormat: DataFormat.Raw,
   isConnected: true,
 };
 
@@ -68,31 +64,10 @@ export default function ArchiveViewer() {
   const [state, setState] = createStore<ViewerState>(INITIAL_STATE);
   const [liveUpdateInterval, setLiveUpdateInterval] = createSignal<number | null>(null);
 
-  // Memoized visible data
-  const visibleData = createMemo(() => 
-    state.data.filter(pv => state.visiblePVs.has(pv.meta.name))
-  );
+  const handlePVMetadata = async (pvName: string, metadata: any) => {
+    const egu = metadata.EGU || "Value";
+    let axisId = `axis_${egu.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
 
-  // Reactive signals for components
-  const selectedPVs = () => state.selectedPVs;
-  const visiblePVs = () => state.visiblePVs;
-  const axes = () => state.axes;
-
-  const checkConnection = async () => {
-    try {
-      const isConnected = await testConnection();
-      setState("isConnected", isConnected);
-    } catch (error) {
-      setState("isConnected", false);
-      console.error("Connection check failed:", error);
-    }
-  };
-
-  const updatePVMetadata = async (pvName: string, metadata: Meta) => {
-    const pvMetadata = getCommonMetadata(metadata);
-    const egu = pvMetadata.EGU || "Value";
-    
-    // Create display limits from metadata
     const displayLimits = {
       low: parseFloat(metadata.LOPR as string) || -100,
       high: parseFloat(metadata.HOPR as string) || 100
@@ -102,19 +77,23 @@ export default function ArchiveViewer() {
       axis => axis.EGU.toLowerCase() === egu.toLowerCase()
     );
 
-    let axisId: string;
     if (existingAxis) {
       axisId = existingAxis.id;
       setState("axes", axes => {
         const newAxes = new Map(axes);
-        const axis = newAxes.get(axisId);
+        const axis = newAxes.get(existingAxis.id);
         if (axis) {
-          axis.pvs.add(pvName);
+          axis.pvs = new Set([...axis.pvs, pvName]);
+          if (!axis.autoRange) {
+            axis.range = {
+              low: Math.min(axis.range?.low ?? Infinity, displayLimits.low),
+              high: Math.max(axis.range?.high ?? -Infinity, displayLimits.high)
+            };
+          }
         }
         return newAxes;
       });
     } else {
-      axisId = `axis_${egu.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${Date.now()}`;
       setState("axes", axes => {
         const newAxes = new Map(axes);
         newAxes.set(axisId, {
@@ -129,27 +108,29 @@ export default function ArchiveViewer() {
       });
     }
 
-    // Update PV metadata and axis assignment
     setState("selectedPVs", pvs => 
-      pvs.map(pv => 
-        pv.name === pvName
-          ? { ...pv, metadata: pvMetadata as PVMetadata, axisId }
-          : pv
-      )
+      pvs.map(p => p.name === pvName ? { ...p, axisId } : p)
     );
   };
 
   const fetchDataForPVs = async () => {
-    if (state.selectedPVs.length === 0) return;
+    if (!state.selectedPVs.length) return;
 
     setState("loading", true);
     try {
       const data = await fetchData(
         state.selectedPVs.map(pv => pv.name),
         state.timeRange.start,
-        state.timeRange.end
+        state.timeRange.end,
+        state.processingMode,
+        state.dataFormat
       );
-      setState({ data, error: null, lastRefresh: new Date() });
+
+      setState({ 
+        data, 
+        error: null, 
+        lastRefresh: new Date() 
+      });
     } catch (error) {
       console.error("Fetch error:", error);
       setState("error", String(error));
@@ -158,42 +139,122 @@ export default function ArchiveViewer() {
     }
   };
 
-  const handleAxisAssignment = (pvName: string, newAxisId: string) => {
-    // Remove PV from old axis
-    setState("axes", axes => {
-      const newAxes = new Map(axes);
-      for (const [id, axis] of newAxes.entries()) {
-        if (id !== newAxisId) {
-          axis.pvs.delete(pvName);
-        }
+  const handleLiveUpdate = async () => {
+    if (!state.selectedPVs.length || !state.data?.timestamps.length) return;
+  
+    const lastTimestamp = state.data.timestamps[state.data.timestamps.length - 1];
+    const now = new Date();
+  
+    try {
+      const data = await fetchData(
+        state.selectedPVs.map(pv => pv.name),
+        new Date(lastTimestamp + 1), // Add 1ms to avoid overlap
+        now,
+        ProcessingMode.Raw,
+        state.dataFormat
+      );
+  
+      if (!data.timestamps.length) return;
+  
+      if (state.liveModeConfig.mode === "rolling") {
+        const cutoffTime = now.getTime() - state.timeRangeSeconds * 1000;
+        
+        // Combine and sort timestamps
+        const allTimestamps = [...state.data.timestamps, ...data.timestamps]
+          .filter(t => t >= cutoffTime)
+          .sort((a, b) => a - b);
+  
+        // Create index maps for both datasets
+        const oldIndexMap = new Map(state.data.timestamps.map((t, i) => [t, i]));
+        const newIndexMap = new Map(data.timestamps.map((t, i) => [t, i]));
+  
+        const mergedData = {
+          timestamps: allTimestamps,
+          series: state.data.series.map((_, seriesIndex) => 
+            allTimestamps.map(t => {
+              if (t >= cutoffTime) {
+                const oldIndex = oldIndexMap.get(t);
+                const newIndex = newIndexMap.get(t);
+                if (newIndex !== undefined) return data.series[seriesIndex][newIndex];
+                if (oldIndex !== undefined) return state.data!.series[seriesIndex][oldIndex];
+                return NaN;
+              }
+              return NaN;
+            })
+          ),
+          meta: data.meta
+        };
+  
+        setState({
+          data: mergedData,
+          timeRange: {
+            start: new Date(cutoffTime),
+            end: now
+          }
+        });
+      } else {
+        // Sort timestamps for append mode too
+        const allTimestamps = [...state.data.timestamps, ...data.timestamps]
+          .sort((a, b) => a - b);
+  
+        setState("data", {
+          timestamps: allTimestamps,
+          series: state.data.series.map((oldSeries, i) => {
+            const newSeries = data.series[i] || [];
+            return [...oldSeries, ...newSeries];
+          }),
+          meta: data.meta
+        });
+        setState("timeRange", "end", now);
       }
-      const newAxis = newAxes.get(newAxisId);
-      if (newAxis) {
-        newAxis.pvs.add(pvName);
-      }
-      return newAxes;
-    });
+    } catch (error) {
+      console.error("Live update error:", error);
+    }
   };
+
+
+
+  const startLiveUpdates = () => {
+    stopLiveUpdates();
+    // Start interval immediately
+    const interval = setInterval(handleLiveUpdate, state.liveModeConfig.updateInterval);
+    setLiveUpdateInterval(interval as unknown as number);
+    // Trigger first update
+    handleLiveUpdate();
+  };
+  const stopLiveUpdates = () => {
+    console.log("Stopping live updates");
+    const interval = liveUpdateInterval();
+    if (interval) {
+      clearInterval(interval);
+      setLiveUpdateInterval(null);
+    }
+  };
+  
+  const checkConnection = async () => {
+    try {
+      const isConnected = await testConnection(state.dataFormat);
+      setState("isConnected", isConnected);
+    } catch (error) {
+      setState("isConnected", false);
+    }
+  };
+
+  createEffect(() => {
+    if (state.liveModeConfig.enabled) {
+      startLiveUpdates();
+    } else {
+      stopLiveUpdates();
+    }
+  });
 
   onMount(() => {
     checkConnection();
     const interval = setInterval(checkConnection, CONNECTION_CHECK_INTERVAL);
     onCleanup(() => {
       clearInterval(interval);
-      if (liveUpdateInterval()) {
-        clearInterval(liveUpdateInterval()!);
-      }
+      stopLiveUpdates();
     });
-  });
-
-  createEffect(() => {
-    if (!state.isConnected && state.liveModeConfig.enabled) {
-      if (liveUpdateInterval()) {
-        clearInterval(liveUpdateInterval()!);
-        setLiveUpdateInterval(null);
-      }
-      setState("liveModeConfig", "enabled", false);
-    }
   });
 
   return (
@@ -201,72 +262,91 @@ export default function ArchiveViewer() {
       <div class="grid grid-cols-[350px_1fr_300px] gap-4 p-4 bg-gray-50 h-full overflow-hidden">
         <div class="overflow-auto">
           <UnifiedManager
-            selectedPVs={selectedPVs}
-            visiblePVs={visiblePVs}
-            axes={axes}
-            onAxisEdit={(updatedAxis) => {
+            selectedPVs={() => state.selectedPVs}
+            visiblePVs={() => state.visiblePVs}
+            axes={() => state.axes}
+            onAxisEdit={(updatedAxis: AxisConfig) => {
               setState("axes", axes => {
                 const newAxes = new Map(axes);
+                const existing = newAxes.get(updatedAxis.id);
+                if (existing) {
+                  updatedAxis.pvs = existing.pvs;
+                }
                 newAxes.set(updatedAxis.id, updatedAxis);
                 return newAxes;
               });
             }}
-            onAxisAdd={(newAxis) => {
+            onAxisAdd={(newAxis: AxisConfig) => {
               setState("axes", axes => {
                 const newAxes = new Map(axes);
                 newAxes.set(newAxis.id, newAxis);
                 return newAxes;
               });
             }}
-            onAxisRemove={(axisId) => {
+            onAxisRemove={(axisId: string) => {
               setState("axes", axes => {
                 const newAxes = new Map(axes);
-                if (newAxes.get(axisId)?.pvs.size === 0) {
+                const axis = newAxes.get(axisId);
+                if (axis && axis.pvs.size === 0) {
                   newAxes.delete(axisId);
                 }
                 return newAxes;
               });
             }}
-            onAddPV={async (pv, properties) => {
-              setState("selectedPVs", pvs => [
-                ...pvs,
-                { name: pv, pen: properties }
-              ]);
+            onAddPV={async (pv: string, properties: any) => {
+              setState("selectedPVs", pvs => [...pvs, { name: pv, pen: properties }]);
               setState("visiblePVs", pvs => new Set([...pvs, pv]));
-
+            
               try {
                 const metadata = await getPVMetadata(pv);
-                await updatePVMetadata(pv, metadata);
+                await handlePVMetadata(pv, metadata);
               } catch (error) {
-                console.warn(`Failed to fetch metadata for ${pv}`, error);
-                await updatePVMetadata(pv, {
+                console.error(`Failed to fetch metadata for ${pv}:`, error);
+                await handlePVMetadata(pv, {
                   name: pv,
                   EGU: "Value",
-                  DESC: "No metadata available",
                   LOPR: "-100",
                   HOPR: "100"
                 });
               }
-
+              
               await fetchDataForPVs();
             }}
-            onUpdatePV={(pv, properties, axisId) => {
+            onUpdatePV={(pv: string, properties: any, axisId: string) => {
+              if (axisId) {
+                const oldAxisId = state.selectedPVs.find(p => p.name === pv)?.axisId;
+                setState("axes", axes => {
+                  const newAxes = new Map(axes);
+                  if (oldAxisId) {
+                    const oldAxis = newAxes.get(oldAxisId);
+                    if (oldAxis) oldAxis.pvs.delete(pv);
+                  }
+                  const newAxis = newAxes.get(axisId);
+                  if (newAxis) newAxis.pvs.add(pv);
+                  return newAxes;
+                });
+              }
               setState("selectedPVs", pvs =>
-                pvs.map(p =>
-                  p.name === pv ? { ...p, pen: properties, axisId } : p
-                )
+                pvs.map(p => p.name === pv ? { ...p, pen: properties, axisId } : p)
               );
-              handleAxisAssignment(pv, axisId);
             }}
-            onRemovePV={(pv) => {
-              setState(s => {
-                const newPvs = s.selectedPVs.filter(p => p.name !== pv);
-                const newVisible = new Set(s.visiblePVs);
-                newVisible.delete(pv);
-                return { selectedPVs: newPvs, visiblePVs: newVisible };
+            onRemovePV={(pv: string) => {
+              const pvInfo = state.selectedPVs.find(p => p.name === pv);
+              if (pvInfo?.axisId) {
+                setState("axes", axes => {
+                  const axis = axes.get(pvInfo.axisId!);
+                  if (axis) axis.pvs.delete(pv);
+                  return axes;
+                });
+              }
+              setState("selectedPVs", pvs => pvs.filter(p => p.name !== pv));
+              setState("visiblePVs", pvs => {
+                const newPvs = new Set(pvs);
+                newPvs.delete(pv);
+                return newPvs;
               });
             }}
-            onVisibilityChange={(pv, isVisible) => {
+            onVisibilityChange={(pv: string, isVisible: any) => {
               setState("visiblePVs", pvs => {
                 const newPvs = new Set(pvs);
                 isVisible ? newPvs.add(pv) : newPvs.delete(pv);
@@ -277,31 +357,35 @@ export default function ArchiveViewer() {
         </div>
 
         <div class="flex flex-col gap-4">
-          <ControlPanel
-            liveModeConfig={() => state.liveModeConfig}
-            dataOperator={() => state.dataOperator}
-            onLiveModeToggle={() => {
-              setState("liveModeConfig", "enabled", !state.liveModeConfig.enabled);
-            }}
-            onLiveModeConfigChange={(config) => {
-              setState("liveModeConfig", prev => ({ ...prev, ...config }));
-            }}
-            onDataOperatorChange={(operator) => {
-              setState("dataOperator", operator);
-            }}
-            onRefresh={fetchDataForPVs}
-            onExport={() => {
-              // Implement export functionality
-            }}
-            loading={() => state.loading}
-          />
+        <ControlPanel
+ liveModeConfig={() => state.liveModeConfig}
+ processingMode={() => state.processingMode}
+ onLiveModeToggle={() => {
+   setState("liveModeConfig", "enabled", !state.liveModeConfig.enabled);
+ }}
+ onLiveModeConfigChange={(config) => {
+   setState("liveModeConfig", prev => ({ ...prev, ...config }));
+ }}
+ onProcessingModeChange={(mode: ProcessingMode) => {
+   setState("processingMode", mode);
+   if (!state.liveModeConfig.enabled) {
+     fetchDataForPVs();
+   }
+ }}
+ onRefresh={fetchDataForPVs}
+ loading={() => state.loading}
+/>
 
-          <ChartJS
-            data={visibleData()}
-            timeRange={state.timeRange}
-            pvs={state.selectedPVs}
-            axes={state.axes}
-          />
+          <div class="chart-container relative w-full h-[calc(100vh-200px)]">
+            <Show when={state.data}>
+              <UPlotChart
+                data={state.data!}
+                timeRange={state.timeRange}
+                pvs={state.selectedPVs.filter(pv => state.visiblePVs.has(pv.name))}
+                axes={state.axes}
+              />
+            </Show>
+          </div>
         </div>
 
         <div class="overflow-auto">
@@ -309,9 +393,17 @@ export default function ArchiveViewer() {
             initialTimezone={state.timezone}
             currentStartDate={state.timeRange.start}
             currentEndDate={state.timeRange.end}
-            onChange={(start, end, timezone) => {
-              setState("timeRange", { start, end });
-              setState("timezone", timezone);
+            onChange={(start: Date, end: Date, timezone: string) => {
+              const seconds = (end.getTime() - start.getTime()) / 1000;
+              setState(s => ({
+                ...s,
+                timeRange: { start, end },
+                timezone,
+                timeRangeSeconds: seconds
+              }));
+              if (!state.liveModeConfig.enabled) {
+                fetchDataForPVs();
+              }
             }}
             isLiveMode={state.liveModeConfig.enabled}
             liveMode={state.liveModeConfig.mode}
