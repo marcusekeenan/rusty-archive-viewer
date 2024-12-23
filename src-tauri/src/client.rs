@@ -234,24 +234,13 @@ impl ArchiverClient {
     
 
     fn convert_to_uplot(pv_data: Vec<PVData>) -> UPlotData {
-        use std::collections::{BTreeSet, HashMap};
-    
-        // First pass: collect timestamps
-        let mut timestamps_set = BTreeSet::new();
-        for pv in &pv_data {
-            for point in &pv.data {
-                let ts = point.secs * 1000 + (point.nanos as i64 / 1_000_000);
-                timestamps_set.insert(ts);
-            }
-        }
-    
-        let timestamps: Vec<i64> = timestamps_set.into_iter().collect();
+        let mut timestamps = Vec::new();
         let mut series = Vec::new();
     
-        // Second pass: create series
         for pv in &pv_data {
-            let mut value_map: HashMap<i64, f64> = HashMap::new();
-            
+            let mut pv_series = Vec::new();
+            let mut pv_timestamps = Vec::new();
+    
             for point in &pv.data {
                 let ts = point.secs * 1000 + (point.nanos as i64 / 1_000_000);
                 if let Some(val) = match &point.val {
@@ -264,20 +253,17 @@ impl ArchiverClient {
                     PointValue::Enum(v) => Some(*v as f64),
                     _ => None,
                 } {
-                    value_map.insert(ts, val);
+                    pv_timestamps.push(ts as f64);
+                    pv_series.push(val);
                 }
             }
     
-            let series_values = timestamps
-                .iter()
-                .map(|ts| value_map.get(ts).copied().unwrap_or(f64::NAN))
-                .collect();
-    
-            series.push(series_values);
+            timestamps.extend(pv_timestamps);
+            series.push(pv_series);
         }
     
         UPlotData {
-            timestamps: timestamps.into_iter().map(|ts| ts as f64).collect(),
+            timestamps,
             series,
             meta: pv_data.iter().map(|pv| pv.meta.clone()).collect(),
         }

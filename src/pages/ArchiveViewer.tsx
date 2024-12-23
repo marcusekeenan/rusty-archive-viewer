@@ -233,9 +233,12 @@ export default function ArchiveViewer() {
     if (state.liveModeConfig.enabled) {
       const interval = window.setInterval(handleLiveUpdate, DEFAULT_UPDATE_INTERVAL);
       setLiveUpdateInterval(interval);
-    } else if (liveUpdateInterval()) {
-      window.clearInterval(liveUpdateInterval());
-      setLiveUpdateInterval(null);
+    } else {
+      const currentInterval = liveUpdateInterval();
+      if (currentInterval !== null) {
+        window.clearInterval(currentInterval);
+        setLiveUpdateInterval(null);
+      }
     }
   });
 
@@ -283,7 +286,7 @@ export default function ArchiveViewer() {
             }
             onAddPV={async (pv: string, properties: PenProperties) => {
               // Update state atomically
-              const initialUpdate = (state) => ({
+              const initialUpdate = (state: { selectedPVs: any; visiblePVs: any; }) => ({
                 ...state,
                 selectedPVs: [...state.selectedPVs, { name: pv, pen: properties }],
                 visiblePVs: new Set([...state.visiblePVs, pv])
@@ -307,8 +310,8 @@ export default function ArchiveViewer() {
                       position: newAxes.size % 2 === 0 ? "left" : "right",
                       autoRange: true,
                       range: {
-                        low: parseFloat(metadata.LOPR) || -100,
-                        high: parseFloat(metadata.HOPR) || 100
+                        low: Number(metadata.LOPR ?? -100),
+                        high: Number(metadata.HOPR ?? 100)
                       },
                       pvs: new Set([pv])
                     };
