@@ -4,6 +4,7 @@ import {
   ProcessingMode,
   UPlotData,
   PVMetadata,
+  Meta,
 } from '../types';
 
 interface FetchDataParams {
@@ -48,22 +49,47 @@ export async function fetchData(
 }
 
 // Rest of the file remains the same
-export async function getPVMetadata(pvName: string): Promise<PVMetadata> {
-  if (!pvName) {
-    throw new Error('PV name is required');
-  }
-
+export const getPVMetadata = async (pv: string): Promise<PVMetadata> => {
   try {
-    const response = await invoke<PVMetadata>('get_pv_metadata', { pv: pvName });
-    if (!response || typeof response !== 'object') {
-      throw new Error('Invalid metadata response');
-    }
-    return response;
+      // Get the raw response as a string
+      const rawResponse = await invoke<string>('get_pv_metadata', { pv });
+      
+      // Parse the JSON ourselves
+      const responseData = JSON.parse(rawResponse);
+
+      // Return metadata in the expected format
+      return {
+          name: pv,
+          EGU: responseData.EGU || responseData.units || "Value",
+          PREC: Number(responseData.PREC || responseData.precision || "2"),
+          DESC: responseData.DESC || pv,
+          LOPR: Number(responseData.LOPR || responseData.lowerDisplayLimit || "-100"),
+          HOPR: Number(responseData.HOPR || responseData.upperDisplayLimit || "100"),
+          HIGH: Number(responseData.HIGH || responseData.upperWarningLimit || "100"),
+          LOW: Number(responseData.LOW || responseData.lowerWarningLimit || "-100"),
+          HIHI: Number(responseData.HIHI || responseData.upperAlarmLimit || "100"),
+          LOLO: Number(responseData.LOLO || responseData.lowerAlarmLimit || "-100"),
+          DRVH: Number(responseData.DRVH || responseData.upperCtrlLimit || "100"),
+          DRVL: Number(responseData.DRVL || responseData.lowerCtrlLimit || "-100")
+      };
   } catch (error) {
-    console.error(`Error fetching metadata for ${pvName}:`, error);
-    throw error;
+      console.error(`Error fetching metadata for ${pv}:`, error);
+      return {
+          name: pv,
+          EGU: "Value",
+          PREC: 2,
+          DESC: pv,
+          LOPR: -100,
+          HOPR: 100,
+          HIGH: 100,
+          LOW: -100,
+          HIHI: 100,
+          LOLO: -100,
+          DRVH: 100,
+          DRVL: -100
+      };
   }
-}
+};
 
 export async function testConnection(format: DataFormat = DataFormat.Raw): Promise<boolean> {
   try {

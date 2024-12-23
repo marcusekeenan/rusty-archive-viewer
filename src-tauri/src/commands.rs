@@ -89,36 +89,27 @@ pub async fn fetch_data(
 pub async fn get_pv_metadata(
     state: State<'_, AppState>,
     pv: String,
-) -> Result<PVMetadata, String> {
+) -> Result<String, String> {  // Changed return type to String
     if pv.is_empty() {
         return Err("PV name cannot be empty".to_string());
     }
 
-    let meta = state
-        .client
-        .get_metadata(&pv)
-        .await
-        .map_err(|e| match e {
-            Error::Network(e) => format!("Network error: {}", e),
-            Error::Decode(msg) => format!("Metadata decode error: {}", msg),
-            Error::Invalid(msg) => format!("Invalid metadata: {}", msg),
-        })?;
+    let url = state.client.build_url("bpl/getMetadata", &[("pv", &pv)])
+        .map_err(|e| e.to_string())?;
 
-    Ok(PVMetadata {
-        name: meta.name,
-        EGU: meta.EGU,
-        PREC: meta.PREC,
-        DESC: meta.DESC,
-        LOPR: meta.LOPR,
-        HOPR: meta.HOPR,
-        DRVL: meta.DRVL,
-        DRVH: meta.DRVH,
-        LOW: meta.LOW,
-        HIGH: meta.HIGH,
-        LOLO: meta.LOLO,
-        HIHI: meta.HIHI,
-    })
+    let response = state.client
+        .client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let text = response.text().await
+        .map_err(|e| e.to_string())?;
+
+    Ok(text)  // Return the raw response text
 }
+
 
 #[tauri::command]
 pub async fn test_connection(

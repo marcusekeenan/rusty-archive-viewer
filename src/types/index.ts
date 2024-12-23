@@ -66,7 +66,34 @@ export interface UPlotData {
 export interface Meta {
   name: string;
   EGU?: string;
-  [key: string]: string | undefined;
+  DRVH?: string;
+  HIGH?: string;
+  HIHI?: string;
+  DRVL?: string;
+  PREC?: string;
+  LOW?: string;
+  LOLO?: string;
+  LOPR?: string;
+  HOPR?: string;
+  NELM?: string;
+  DESC?: string;
+}
+
+export interface ArchiverMetadataResponse {
+  pvName: string;
+  units: string;
+  precision: string;
+  lowerDisplayLimit: string;
+  upperDisplayLimit: string;
+  lowerCtrlLimit: string;
+  upperCtrlLimit: string;
+  lowerWarningLimit: string;
+  upperWarningLimit: string;
+  lowerAlarmLimit: string;
+  upperAlarmLimit: string;
+  elementCount: string;
+  DESC: string;
+  [key: string]: any; // For other fields we don't use
 }
 
 export interface Point {

@@ -235,6 +235,12 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
                                     class="w-4 h-4 cursor-pointer"
                                     style={{
                                       "accent-color": pv.pen.color,
+                                      "border-color": pv.pen.color,
+                                      "background-color": props
+                                        .visiblePVs()
+                                        .has(pv.name)
+                                        ? pv.pen.color
+                                        : "transparent",
                                     }}
                                   />
                                   <span
@@ -332,29 +338,29 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
 
       {/* Dialogs */}
       <Show when={editingAxis()}>
-  <AxisPropertiesDialog
-    isOpen={true}
-    onClose={() => setEditingAxis(undefined)}
-    axis={editingAxis()}
-    existingAxes={props.axes()}
-    onSave={(updatedAxis) => {
-      props.onAxisEdit(updatedAxis);
-      // Note: Don't close the dialog here
-    }}
-  />
-</Show>
+        <AxisPropertiesDialog
+          isOpen={true}
+          onClose={() => setEditingAxis(undefined)}
+          axis={editingAxis()}
+          existingAxes={props.axes()}
+          onSave={(updatedAxis) => {
+            props.onAxisEdit(updatedAxis);
+            // Note: Don't close the dialog here
+          }}
+        />
+      </Show>
 
-<Show when={isNewAxisDialogOpen()}>
-  <AxisPropertiesDialog
-    isOpen={true}
-    onClose={() => setIsNewAxisDialogOpen(false)}
-    existingAxes={props.axes()}
-    onSave={(newAxis) => {
-      props.onAxisAdd(newAxis);
-      // Note: Don't close the dialog here
-    }}
-  />
-</Show>
+      <Show when={isNewAxisDialogOpen()}>
+        <AxisPropertiesDialog
+          isOpen={true}
+          onClose={() => setIsNewAxisDialogOpen(false)}
+          existingAxes={props.axes()}
+          onSave={(newAxis) => {
+            props.onAxisAdd(newAxis);
+            // Note: Don't close the dialog here
+          }}
+        />
+      </Show>
 
       <Show when={editingPV()}>
         <PenPropertiesDialog

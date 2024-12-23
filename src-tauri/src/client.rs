@@ -11,8 +11,8 @@ use url::Url;
 
 #[derive(Clone)]
 pub struct ArchiverClient {
-    client: Client,
-    base_url: String,
+    pub client: Client,
+    pub base_url: String,
 }
 
 impl ArchiverClient {
@@ -177,7 +177,7 @@ impl ArchiverClient {
         }
     }
 
-    fn build_url(&self, path: &str, params: &[(&str, &str)]) -> Result<Url, Error> {
+    pub fn build_url(&self, path: &str, params: &[(&str, &str)]) -> Result<Url, Error> {
         let mut url = Url::parse(&format!("{}/{}", self.base_url, path))
             .map_err(|e| Error::Invalid(format!("Invalid URL: {}", e)))?;
         url.query_pairs_mut().extend_pairs(params);
@@ -195,14 +195,14 @@ impl ArchiverClient {
 
     pub async fn get_metadata(&self, pv: &str) -> Result<Meta, Error> {
         let url = self.build_url("bpl/getMetadata", &[("pv", pv)])?;
-
+    
         let response = self
             .client
             .get(url.clone())
             .send()
             .await
             .map_err(Error::Network)?;
-
+    
         let status = response.status();
         if !status.is_success() {
             let error_body = response
@@ -214,23 +214,44 @@ impl ArchiverClient {
                 status, url, error_body
             )));
         }
-
+    
         let bytes = response.bytes().await.map_err(Error::Network)?;
-
-        serde_json::from_slice(&bytes)
-            .map_err(|e| Error::Invalid(format!("Failed to parse metadata: {}", e)))
+        
+        // Print the raw response for debugging
+        println!("Metadata response: {}", String::from_utf8_lossy(&bytes));
+    
+        let meta: Meta = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::Invalid(format!("Failed to parse metadata: {} - Raw response: {}", 
+                e, String::from_utf8_lossy(&bytes))))?;
+    
+        // Ensure required fields are present
+        if meta.name.is_empty() {
+            return Err(Error::Invalid("Missing name in metadata response".to_string()));
+        }
+    
+        Ok(meta)
     }
+    
 
     fn convert_to_uplot(pv_data: Vec<PVData>) -> UPlotData {
         use std::collections::{BTreeSet, HashMap};
-
-        // ln!("Here is the pv_data before conversion: {:?}", pv_data);
-
+    
+        // First pass: collect timestamps
         let mut timestamps_set = BTreeSet::new();
-        let mut series_data: Vec<HashMap<i64, f64>> = vec![];
-
         for pv in &pv_data {
-            let mut series_map = HashMap::new();
+            for point in &pv.data {
+                let ts = point.secs * 1000 + (point.nanos as i64 / 1_000_000);
+                timestamps_set.insert(ts);
+            }
+        }
+    
+        let timestamps: Vec<i64> = timestamps_set.into_iter().collect();
+        let mut series = Vec::new();
+    
+        // Second pass: create series
+        for pv in &pv_data {
+            let mut value_map: HashMap<i64, f64> = HashMap::new();
+            
             for point in &pv.data {
                 let ts = point.secs * 1000 + (point.nanos as i64 / 1_000_000);
                 if let Some(val) = match &point.val {
@@ -243,28 +264,23 @@ impl ArchiverClient {
                     PointValue::Enum(v) => Some(*v as f64),
                     _ => None,
                 } {
-                    timestamps_set.insert(ts);
-                    series_map.insert(ts, val);
+                    value_map.insert(ts, val);
                 }
             }
-            series_data.push(series_map);
+    
+            let series_values = timestamps
+                .iter()
+                .map(|ts| value_map.get(ts).copied().unwrap_or(f64::NAN))
+                .collect();
+    
+            series.push(series_values);
         }
-
-        let timestamps: Vec<i64> = timestamps_set.into_iter().collect();
-        let mut series = Vec::with_capacity(series_data.len());
-
-        for series_map in series_data {
-            let mut data = Vec::with_capacity(timestamps.len());
-            for &ts in &timestamps {
-                data.push(*series_map.get(&ts).unwrap_or(&f64::NAN));
-            }
-            series.push(data);
-        }
-
+    
         UPlotData {
-            timestamps: timestamps.iter().map(|&ts| ts as f64).collect(),
+            timestamps: timestamps.into_iter().map(|ts| ts as f64).collect(),
             series,
             meta: pv_data.iter().map(|pv| pv.meta.clone()).collect(),
         }
     }
+
 }

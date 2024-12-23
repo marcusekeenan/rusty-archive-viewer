@@ -51,17 +51,21 @@ pub struct UPlotData {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Meta {
+    #[serde(default)]
+    #[serde(alias = "pvName")]
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub DRVH: Option<String>,
+    #[serde(alias = "units")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub EGU: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub DRVH: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub HIGH: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub HIHI: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub DRVL: Option<String>,
+    #[serde(alias = "precision")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub PREC: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,6 +76,7 @@ pub struct Meta {
     pub LOPR: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub HOPR: Option<String>,
+    #[serde(alias = "elementCount")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub NELM: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
