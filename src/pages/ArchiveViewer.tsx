@@ -149,65 +149,68 @@ export default function ArchiveViewer() {
 
   // Live update handling
   const handleLiveUpdate = async () => {
-    if (!state.selectedPVs.length || !state.data?.timestamps.length || isUpdating()) return;
-
+    if (!state.liveModeConfig.enabled) return;
+   
     try {
-      setIsUpdating(true);
       const now = Date.now();
       const data = await fetchData(
         state.selectedPVs.map(pv => pv.name),
-        new Date(lastRequestTime()),
+        new Date(now - 2000), // Only request last 2 seconds
         new Date(now),
         ProcessingMode.Raw,
         state.dataFormat
       );
-
-      setLastRequestTime(now);
-      
+   
       if (!data.timestamps.length) return;
-
-      if (state.liveModeConfig.mode === "rolling") {
+   
+      const latestData = {
+        timestamp: data.timestamps[data.timestamps.length - 1],
+        values: data.series.map(s => s[s.length - 1])
+      };
+   
+      if (state.liveModeConfig.mode === "rolling" && state.data) {
         const cutoffTime = now - state.timeRangeSeconds * 1000;
-        
+        const keptTimestamps = state.data.timestamps.filter(ts => ts >= cutoffTime);
+        const keptSeriesData = state.data.series.map(series => 
+          series.slice(-keptTimestamps.length)
+        );
+   
         setState("data", {
-          timestamps: [...(state.data?.timestamps || []), ...data.timestamps]
-            .filter(ts => ts >= cutoffTime),
-          series: state.data!.series.map((series, i) => [
-            ...series,
-            ...(data.series[i] || [])
-          ].filter((_, idx) => (state.data?.timestamps[idx] || 0) >= cutoffTime)),
-          meta: data.meta
+          ...state.data,
+          timestamps: [...keptTimestamps, latestData.timestamp],
+          series: state.data.series.map((_, i) => [
+            ...keptSeriesData[i],
+            latestData.values[i]
+          ])
         });
-
-        setState("timeRange", {
-          start: new Date(cutoffTime),
-          end: new Date(now)
-        });
-      } else {
+      } else if (state.data) {
         setState("data", {
-          timestamps: [...(state.data?.timestamps || []), ...data.timestamps],
-          series: state.data!.series.map((series, i) => [
-            ...series,
-            ...(data.series[i] || [])
-          ]),
-          meta: data.meta
+          ...state.data,
+          timestamps: [...state.data.timestamps, latestData.timestamp], 
+          series: state.data.series.map((oldSeries, i) => [
+            ...oldSeries,
+            latestData.values[i]
+          ])
         });
-
-        setState("timeRange", "end", new Date(now));
       }
+   
+      setLastRequestTime(now);
     } catch (error) {
       console.error("Live update error:", error);
-    } finally {
-      setIsUpdating(false);
     }
-  };
-
+   };
   // Live mode controls
   const startLiveUpdates = () => {
     stopLiveUpdates();
-    setLastRequestTime(Date.now());
+    if (state.data && state.data.timestamps.length > 0) {
+      // Get latest timestamp we have
+      const latestTs = Math.max(...state.data.timestamps);
+      setLastRequestTime(latestTs);
+    } else {
+      setLastRequestTime(Date.now() - 2000); // Request last 2 seconds if no data
+    }
     setState("liveModeConfig", "enabled", true);
-  };
+   };
 
   const stopLiveUpdates = () => {
     const interval = liveUpdateInterval();

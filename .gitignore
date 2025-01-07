@@ -54,3 +54,5 @@ Thumbs.db
 
 # Other
 *.tmp
+
+.codegpt

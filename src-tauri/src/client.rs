@@ -233,16 +233,18 @@ impl ArchiverClient {
     }
     
 
+    // In convert_to_uplot
     fn convert_to_uplot(pv_data: Vec<PVData>) -> UPlotData {
         let mut timestamps = Vec::new();
-        let mut series = Vec::new();
+        let mut series = Vec::with_capacity(pv_data.len());
     
         for pv in &pv_data {
-            let mut pv_series = Vec::new();
-            let mut pv_timestamps = Vec::new();
-    
+            let mut pv_values = Vec::new();
+            
+            // Add timestamps and values for this PV
             for point in &pv.data {
                 let ts = point.secs * 1000 + (point.nanos as i64 / 1_000_000);
+                
                 if let Some(val) = match &point.val {
                     PointValue::Float(v) => Some(*v as f64),
                     PointValue::Double(v) => Some(*v),
@@ -253,13 +255,14 @@ impl ArchiverClient {
                     PointValue::Enum(v) => Some(*v as f64),
                     _ => None,
                 } {
-                    pv_timestamps.push(ts as f64);
-                    pv_series.push(val);
+                    // Only add timestamp if first PV
+                    if timestamps.len() < pv.data.len() {
+                        timestamps.push(ts as f64);
+                    }
+                    pv_values.push(val);
                 }
             }
-    
-            timestamps.extend(pv_timestamps);
-            series.push(pv_series);
+            series.push(pv_values);
         }
     
         UPlotData {
@@ -269,4 +272,5 @@ impl ArchiverClient {
         }
     }
 
-}
+
+    }
