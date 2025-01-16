@@ -1,6 +1,6 @@
 import { createSignal, createEffect, For } from 'solid-js';
-import type { PenProperties } from './types';
-import type { AxisConfig } from '../chart/types';
+import type { PenProperties } from '../../types';
+import type { AxisConfig } from '../../types';
 
 interface PenPropertiesDialogProps {
   isOpen: boolean;

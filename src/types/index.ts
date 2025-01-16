@@ -57,7 +57,7 @@ export enum DataFormat {
 }
 
 // Data Structures
-export interface UPlotData {
+export interface EPICSData {
   timestamps: number[];
   series: number[][];
   meta: Meta[];
@@ -156,6 +156,7 @@ export interface AxisConfig {
   range?: AxisRange;
   pvs: Set<string>;
   color?: string;
+  currentRange?: AxisRange;
 }
 
 export interface AxisRange {
@@ -201,7 +202,7 @@ export interface ChartUpdateEvent {
   pvs: PVWithProperties[];
   axes: Map<string, AxisConfig>;
   timeRange: TimeRange;
-  data: UPlotData;
+  data: EPICSData;
 }
 
 // Validation types

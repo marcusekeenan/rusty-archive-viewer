@@ -18,6 +18,7 @@ interface UnifiedManagerProps {
   onUpdatePV: (pv: string, properties: PenProperties, axisId: string) => void;
   onRemovePV: (pv: string) => void;
   onVisibilityChange: (pvName: string, isVisible: boolean) => void;
+  autoRanges: () => Map<string, { low: number; high: number }>; 
 }
 
 export default function UnifiedManager(props: UnifiedManagerProps) {
@@ -343,9 +344,10 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
           onClose={() => setEditingAxis(undefined)}
           axis={editingAxis()}
           existingAxes={props.axes()}
+          pvs={props.selectedPVs()}
+          currentAutoRange={props.autoRanges()?.get(editingAxis()?.id || '')}
           onSave={(updatedAxis) => {
             props.onAxisEdit(updatedAxis);
-            // Note: Don't close the dialog here
           }}
         />
       </Show>
@@ -355,9 +357,9 @@ export default function UnifiedManager(props: UnifiedManagerProps) {
           isOpen={true}
           onClose={() => setIsNewAxisDialogOpen(false)}
           existingAxes={props.axes()}
+          pvs={props.selectedPVs()}
           onSave={(newAxis) => {
             props.onAxisAdd(newAxis);
-            // Note: Don't close the dialog here
           }}
         />
       </Show>

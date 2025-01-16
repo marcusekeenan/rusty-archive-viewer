@@ -1,21 +1,42 @@
-import { createSignal, createEffect } from 'solid-js';
-import type { AxisConfig } from '../chart/types';
+import { createSignal, createEffect, Show } from 'solid-js';
+import type { AxisConfig, PVWithProperties } from '../../types';
 
 interface AxisPropertiesDialogProps {
   isOpen: boolean;
   onClose: () => void;
   axis?: AxisConfig;
   existingAxes: Map<string, AxisConfig>;
+  pvs: PVWithProperties[];
+  currentAutoRange?: { low: number; high: number };
   onSave: (axis: AxisConfig) => void;
 }
 
 export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
   let debounceTimeout: number | undefined;
   
+  // Helper to get EGU from any assigned PV
+  const getInitialEGU = () => {
+    if (props.axis?.EGU) return props.axis.EGU;
+    
+    const axisId = props.axis?.id;
+    if (axisId) {
+      const axis = props.existingAxes.get(axisId);
+      if (axis?.pvs.size) {
+        for (const pvName of axis.pvs) {
+          const pv = props.pvs?.find(p => p.name === pvName);
+          if (pv?.metadata?.EGU) {
+            return pv.metadata.EGU;
+          }
+        }
+      }
+    }
+    return '';
+  };
+  
   const [properties, setProperties] = createSignal<AxisConfig>(
     props.axis || {
       id: `axis_${Date.now()}`,
-      EGU: '',
+      EGU: getInitialEGU(),
       position: 'left',
       autoRange: true,
       range: { low: 0, high: 100 },
@@ -23,29 +44,41 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
     }
   );
 
+  const [useFullRange, setUseFullRange] = createSignal(false);
+  const [lowInput, setLowInput] = createSignal('');
+  const [highInput, setHighInput] = createSignal('');
+
   createEffect(() => {
     if (props.isOpen && props.axis) {
+      const initialEGU = getInitialEGU();
       setProperties({
         ...props.axis,
+        EGU: initialEGU || props.axis.EGU,
+        range: props.axis.range || { low: 0, high: 100 },
         autoRange: props.axis.autoRange ?? true
       });
+      setLowInput(props.axis.range?.low.toString() || '0');
+      setHighInput(props.axis.range?.high.toString() || '100');
     }
   });
 
-  const updateProperty = <K extends keyof AxisConfig>(
-    key: K,
-    value: AxisConfig[K]
-  ) => {
-    const newProps = { ...properties(), [key]: value };
-    setProperties(newProps);
-    
-    if (debounceTimeout) {
-      clearTimeout(debounceTimeout);
+
+  const metaRange = () => {
+    // Find first PV that has LOPR and HOPR in its metadata
+    const axis = props.existingAxes.get(properties().id);
+    if (!axis?.pvs.size) return null;
+  
+    for (const pvName of axis.pvs) {
+      const pv = props.pvs?.find(p => p.name === pvName);
+      if (pv?.metadata?.LOPR !== undefined && pv?.metadata?.HOPR !== undefined) {
+        return {
+          low: pv.metadata.LOPR,  // Already a number, no need for parseFloat
+          high: pv.metadata.HOPR
+        };
+      }
     }
     
-    debounceTimeout = window.setTimeout(() => {
-      props.onSave(newProps);
-    }, 150);
+    return null;
   };
 
   const handleRangeChange = (key: 'low' | 'high', value: string) => {
@@ -67,6 +100,55 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
       debounceTimeout = window.setTimeout(() => {
         props.onSave(newProps);
       }, 150);
+    }
+  };
+
+  const updateProperty = <K extends keyof AxisConfig>(
+    key: K,
+    value: AxisConfig[K]
+  ) => {
+    const newProps = { ...properties(), [key]: value };
+    setProperties(newProps);
+    
+    if (debounceTimeout) {
+      clearTimeout(debounceTimeout);
+    }
+    
+    debounceTimeout = window.setTimeout(() => {
+      props.onSave(newProps);
+    }, 150);
+  };
+
+  // Handler for toggling autoRange
+  const handleAutoRangeToggle = (checked: boolean) => {
+    if (checked) {
+      updateProperty('autoRange', true);
+    } else {
+      // Use current auto range when disabling, fall back to current range if not available
+      const displayRange = props.currentAutoRange || getDisplayRange();
+      updateProperty('autoRange', false);
+      updateProperty('range', displayRange);
+      setLowInput(displayRange.low.toString());
+      setHighInput(displayRange.high.toString());
+    }
+  };
+
+  const getDisplayRange = () => {
+    // If using full range and meta range is available, use that
+    if (useFullRange() && metaRange()) {
+      return metaRange()!;
+    }
+    // Otherwise return current range
+    return properties().range || { low: 0, high: 100 };
+  };
+
+  const handleFullRangeToggle = (checked: boolean) => {
+    setUseFullRange(checked);
+    if (checked && metaRange()) {
+      const range = metaRange()!;
+      updateProperty('range', range);
+      setLowInput(range.low.toString());
+      setHighInput(range.high.toString());
     }
   };
 
@@ -131,7 +213,7 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
               type="checkbox"
               id="autoRange"
               checked={properties().autoRange}
-              onChange={(e) => updateProperty('autoRange', e.currentTarget.checked)}
+              onChange={(e) => handleAutoRangeToggle(e.currentTarget.checked)}
               class="rounded border-gray-300"
             />
             <label for="autoRange" class="text-sm font-medium text-gray-700">
@@ -140,28 +222,53 @@ export function AxisPropertiesDialog(props: AxisPropertiesDialogProps) {
           </div>
 
           {!properties().autoRange && (
-            <div class="grid grid-cols-2 gap-4">
-              <div class="space-y-2">
-                <label class="block text-sm font-medium text-gray-700">
-                  Min Value
-                </label>
-                <input
-                  type="number"
-                  value={properties().range?.low ?? 0}
-                  onInput={(e) => handleRangeChange('low', e.currentTarget.value)}
-                  class="w-full px-3 py-2 border rounded-md"
-                />
-              </div>
-              <div class="space-y-2">
-                <label class="block text-sm font-medium text-gray-700">
-                  Max Value
-                </label>
-                <input
-                  type="number"
-                  value={properties().range?.high ?? 100}
-                  onInput={(e) => handleRangeChange('high', e.currentTarget.value)}
-                  class="w-full px-3 py-2 border rounded-md"
-                />
+            <div class="space-y-4">
+              <Show when={metaRange()}>
+                <div class="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="useFullRange"
+                    checked={useFullRange()}
+                    onChange={(e) => handleFullRangeToggle(e.currentTarget.checked)}
+                    class="rounded border-gray-300"
+                  />
+                  <label for="useFullRange" class="text-sm font-medium text-gray-700">
+                    Use Full Range ({metaRange()?.low} to {metaRange()?.high})
+                  </label>
+                </div>
+              </Show>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-2">
+                  <label class="block text-sm font-medium text-gray-700">
+                    Min Value
+                  </label>
+                  <input
+                    type="text"
+                    inputmode="decimal"
+                    value={lowInput()}
+                    onInput={(e) => {
+                      setLowInput(e.currentTarget.value);
+                      handleRangeChange('low', e.currentTarget.value);
+                    }}
+                    class="w-full px-3 py-2 border rounded-md"
+                  />
+                </div>
+                <div class="space-y-2">
+                  <label class="block text-sm font-medium text-gray-700">
+                    Max Value
+                  </label>
+                  <input
+                    type="text"
+                    inputmode="decimal"
+                    value={highInput()}
+                    onInput={(e) => {
+                      setHighInput(e.currentTarget.value);
+                      handleRangeChange('high', e.currentTarget.value);
+                    }}
+                    class="w-full px-3 py-2 border rounded-md"
+                  />
+                </div>
               </div>
             </div>
           )}

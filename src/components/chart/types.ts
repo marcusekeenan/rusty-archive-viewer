@@ -4,11 +4,11 @@ import type {
   PVWithProperties, 
   AxisConfig,
   TimeRange,
-  UPlotData
+  EPICSData
 } from '../../types';
 
 export interface ChartProps {
-  data: UPlotData;
+  data: EPICSData;
   pvs: PVWithProperties[];
   timeRange: TimeRange;
   axes: Map<string, AxisConfig>;

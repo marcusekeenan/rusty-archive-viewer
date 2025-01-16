@@ -3,17 +3,13 @@ import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement
          TimeScale, Title, Tooltip, Legend, ChartOptions, ChartDataset, LineController } from "chart.js";
 import zoomPlugin from "chartjs-plugin-zoom";
 import "chartjs-adapter-date-fns";
-import type { PVWithProperties, AxisConfig, Meta } from "../../types";
+import type { PVWithProperties, AxisConfig, Meta, EPICSData } from "../../types";
 
 ChartJS.register(LineController, CategoryScale, LinearScale, PointElement, LineElement, 
                 TimeScale, Title, Tooltip, Legend, zoomPlugin);
 
 interface ChartProps {
-  data: Array<{
-    meta: Meta;
-    timestamps: number[];
-    values: number[];
-  }>;
+  data: EPICSData;
   pvs: PVWithProperties[];
   timeRange: { start: Date; end: Date };
   timezone: string;
@@ -34,18 +30,19 @@ export default function EPICSChart(props: ChartProps) {
   });
 
   const formatDatasets = createMemo(() => {
-    return props.data.map(pvData => {
-      const pvInfo = props.pvs.find(pv => pv.name === pvData.meta?.name);
+    // Map each series to a dataset
+    return props.data.series.map((seriesData, index) => {
+      const pvInfo = props.pvs[index]; // Assume series index matches PV index
       if (!pvInfo) return null;
 
-      const points: Point[] = pvData.timestamps.map((ts, i) => ({
+      const points: Point[] = props.data.timestamps.map((ts, i) => ({
         x: ts,
-        y: pvData.values[i]
+        y: seriesData[i]
       }));
 
       return {
         type: 'line' as const,
-        label: `${pvData.meta.name} (${pvData.meta.EGU || ''})`,
+        label: `${props.data.meta[index]?.name || pvInfo.name} (${props.data.meta[index]?.EGU || ''})`,
         data: points,
         yAxisID: pvInfo.axisId || 'default',
         borderColor: pvInfo.pen.color,

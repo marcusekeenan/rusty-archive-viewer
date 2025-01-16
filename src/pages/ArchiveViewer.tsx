@@ -11,14 +11,14 @@ import { fetchData, getPVMetadata, testConnection } from "../utils/archiverApi";
 import {
   DataFormat,
   ProcessingMode,
-  UPlotData,
+  EPICSData,
   PVWithProperties,
   AxisConfig,
   PenProperties,
 } from "../types";
 import UnifiedManager from "../components/controls/UnifiedManager";
 import ControlPanel from "../components/controls/ControlPanel";
-import UPlotChart from "../components/chart/UPlotChart";
+import EPICSChart from "../components/chart/EPICSChart";
 import TimeRangeSelector from "../components/controls/TimeRangeSelector";
 import ConnectionStatus from "../components/controls/ConnectionStatus";
 
@@ -36,7 +36,7 @@ interface ViewerState {
     end: Date;
   };
   timeRangeSeconds: number;
-  data: UPlotData | null;
+  data: EPICSData | null;
   loading: boolean;
   error: string | null;
   lastRefresh: Date | null;
@@ -53,7 +53,7 @@ interface ViewerState {
 }
 
 export default function ArchiveViewer() {
-  // Initialize state with default values
+  // Initialize state
   const [state, setState] = createStore<ViewerState>({
     selectedPVs: [],
     visiblePVs: new Set(),
@@ -78,12 +78,13 @@ export default function ArchiveViewer() {
     isConnected: true,
   });
 
-  // Live update handling
+  // Live update state
   const [liveUpdateInterval, setLiveUpdateInterval] = createSignal<number | null>(null);
   const [lastRequestTime, setLastRequestTime] = createSignal<number>(Date.now());
   const [isUpdating, setIsUpdating] = createSignal(false);
+  const [autoRanges, setAutoRanges] = createSignal<Map<string, { low: number; high: number }>>(new Map());
 
-  // Core data fetching function
+  // Core data fetching
   const fetchDataForPVs = async () => {
     if (!state.selectedPVs.length) return;
 
@@ -110,41 +111,13 @@ export default function ArchiveViewer() {
     }
   };
 
-  // Metadata handling
-  const handlePVMetadata = async (pvName: string, metadata: any) => {
-    const egu = metadata.EGU || "Value";
-    const axisId = `axis_${egu.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
-
-    setState("axes", axes => {
-      const newAxes = new Map(axes);
-      let axis = Array.from(newAxes.values()).find(a => a.EGU === egu);
-      
-      if (!axis) {
-        axis = {
-          id: axisId,
-          EGU: egu,
-          position: newAxes.size % 2 === 0 ? "left" : "right",
-          autoRange: true,
-          range: {
-            low: parseFloat(metadata.LOPR) || -100,
-            high: parseFloat(metadata.HOPR) || 100
-          },
-          pvs: new Set([pvName])
-        };
-        newAxes.set(axisId, axis);
-      } else {
-        axis.pvs.add(pvName);
-      }
-      return newAxes;
+  // Handle auto range updates from chart
+  const handleAxisRangeUpdate = (axisId: string, range: { low: number; high: number }) => {
+    setAutoRanges(prev => {
+      const newRanges = new Map(prev);
+      newRanges.set(axisId, range);
+      return newRanges;
     });
-
-    setState("selectedPVs", pvs => 
-      pvs.map(p => p.name === pvName ? {
-        ...p,
-        axisId,
-        metadata: { name: pvName, EGU: egu, ...metadata }
-      } : p)
-    );
   };
 
   // Live update handling
@@ -155,7 +128,7 @@ export default function ArchiveViewer() {
       const now = Date.now();
       const data = await fetchData(
         state.selectedPVs.map(pv => pv.name),
-        new Date(now - 2000), // Only request last 2 seconds
+        new Date(now - 2000),
         new Date(now),
         ProcessingMode.Raw,
         state.dataFormat
@@ -165,7 +138,7 @@ export default function ArchiveViewer() {
    
       const latestData = {
         timestamp: data.timestamps[data.timestamps.length - 1],
-        values: data.series.map(s => s[s.length - 1])
+        values: data.series.map((s: string | any[]) => s[s.length - 1])
       };
    
       if (state.liveModeConfig.mode === "rolling" && state.data) {
@@ -198,24 +171,22 @@ export default function ArchiveViewer() {
     } catch (error) {
       console.error("Live update error:", error);
     }
-   };
-  // Live mode controls
+  };
+
   const startLiveUpdates = () => {
     stopLiveUpdates();
-    if (state.data && state.data.timestamps.length > 0) {
-      // Get latest timestamp we have
-      const latestTs = Math.max(...state.data.timestamps);
-      setLastRequestTime(latestTs);
+    if (state.data?.timestamps.length) {
+      setLastRequestTime(Math.max(...state.data.timestamps));
     } else {
-      setLastRequestTime(Date.now() - 2000); // Request last 2 seconds if no data
+      setLastRequestTime(Date.now() - 2000);
     }
     setState("liveModeConfig", "enabled", true);
-   };
+  };
 
   const stopLiveUpdates = () => {
     const interval = liveUpdateInterval();
     if (interval) {
-      window.clearInterval(interval);
+      clearInterval(interval);
       setLiveUpdateInterval(null);
     }
     setState("liveModeConfig", "enabled", false);
@@ -234,12 +205,12 @@ export default function ArchiveViewer() {
   // Effects
   createEffect(() => {
     if (state.liveModeConfig.enabled) {
-      const interval = window.setInterval(handleLiveUpdate, DEFAULT_UPDATE_INTERVAL);
-      setLiveUpdateInterval(interval);
+      const interval = setInterval(handleLiveUpdate, DEFAULT_UPDATE_INTERVAL);
+      setLiveUpdateInterval(interval as unknown as number);
     } else {
-      const currentInterval = liveUpdateInterval();
-      if (currentInterval !== null) {
-        window.clearInterval(currentInterval);
+      const interval = liveUpdateInterval();
+      if (interval) {
+        clearInterval(interval);
         setLiveUpdateInterval(null);
       }
     }
@@ -262,6 +233,7 @@ export default function ArchiveViewer() {
             selectedPVs={() => state.selectedPVs}
             visiblePVs={() => state.visiblePVs}
             axes={() => state.axes}
+            autoRanges={autoRanges}
             onAxisEdit={(axis: AxisConfig) => 
               setState("axes", axes => {
                 const newAxes = new Map(axes);
@@ -288,16 +260,13 @@ export default function ArchiveViewer() {
               })
             }
             onAddPV={async (pv: string, properties: PenProperties) => {
-              // Update state atomically
-              const initialUpdate = (state: { selectedPVs: any; visiblePVs: any; }) => ({
+              setState(state => ({
                 ...state,
                 selectedPVs: [...state.selectedPVs, { name: pv, pen: properties }],
                 visiblePVs: new Set([...state.visiblePVs, pv])
-              });
-              setState(initialUpdate);
+              }));
             
               try {
-                // Get metadata and handle in one atomic update
                 const metadata = await getPVMetadata(pv);
                 const egu = metadata.EGU || "Value";
                 const axisId = `axis_${egu.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
@@ -333,9 +302,7 @@ export default function ArchiveViewer() {
                 });
             
               } catch (error) {
-                // Handle error case similarly
                 console.error(`Failed to fetch metadata for ${pv}:`, error);
-                // ... error handling
               }
             
               await fetchDataForPVs();
@@ -425,14 +392,16 @@ export default function ArchiveViewer() {
           />
 
           <div class="chart-container relative w-full h-[calc(100vh-200px)]">
-            <Show when={state.data}>
-              <UPlotChart
-                data={state.data!}
-                timeRange={state.timeRange}
-                pvs={state.selectedPVs.filter(pv => state.visiblePVs.has(pv.name))}
-                axes={state.axes}
-              />
-            </Show>
+          <Show when={state.data}>
+            <EPICSChart
+              data={state.data!}
+              timeRange={state.timeRange}
+              pvs={state.selectedPVs.filter(pv => state.visiblePVs.has(pv.name))}
+              axes={state.axes}
+              timezone={state.timezone}  // Add this
+              onAxisRangeUpdate={handleAxisRangeUpdate}
+            />
+          </Show>
           </div>
         </div>
 
